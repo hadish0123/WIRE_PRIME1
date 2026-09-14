@@ -8,30 +8,31 @@
       </span>
     </div>
     <div class="card-body">
+      <!-- A failed node sync is diagnostic: an already acknowledged peer keeps working. -->
+      <p v-if="syncWarning" class="sync-warning">
+        <WarningIcon />
+        <span>{{ $t('configCard.syncWarning') }}</span>
+      </p>
+
       <!-- AWG card -->
       <template v-if="tab === 'awg'">
         <div
           class="qr-box"
           :class="{
-            blurred: node.ready && activeQrKey !== `awg-${node.id}`,
+            blurred: node.ready && activeQrKey !== qrKey,
             'qr-clickable': node.ready,
           }"
-          @click="node.ready && $emit('toggleQr', `awg-${node.id}`)"
+          @click="node.ready && $emit('toggleQr', qrKey)"
         >
-          <img
-            v-if="node.ready"
-            :src="`/pub/u/${userId}/qr/awg/${node.id}`"
-            :alt="`QR ${node.name}`"
-            class="qr-img"
-          />
+          <img v-if="node.ready" :src="awgQrUrl" :alt="`QR ${node.name}`" class="qr-img" />
           <div v-if="node.ready" class="qr-overlay">
             <EyeIcon />
             <span>{{ $t('configCard.showQr') }}</span>
           </div>
           <div v-if="!node.ready" class="qr-placeholder">
             <QrIcon />
-            <span>{{ $t('configCard.configPreparing') }}</span>
-            <small>{{ $t('configCard.configPreparingHint') }}</small>
+            <span>{{ unavailableTitle }}</span>
+            <small>{{ unavailableHint }}</small>
           </div>
         </div>
         <p v-if="node.ready" class="hint">{{ $t('configCard.scanHint') }}</p>
@@ -42,10 +43,10 @@
         <div
           class="qr-box"
           :class="{
-            blurred: qrItem.hasChunks && activeQrKey !== `vpn-${node.id}`,
+            blurred: qrItem.hasChunks && activeQrKey !== qrKey,
             'qr-clickable': qrItem.hasChunks,
           }"
-          @click="qrItem.hasChunks && $emit('toggleQr', `vpn-${node.id}`)"
+          @click="qrItem.hasChunks && $emit('toggleQr', qrKey)"
         >
           <div
             v-if="node.ready && node.vpn_uri && !qrItem.hasChunks && !qrItem.hasError"
@@ -64,10 +65,10 @@
             :alt="`QR ${node.name}`"
             class="qr-img"
           />
-          <div v-else-if="!node.ready || !node.vpn_uri" class="qr-placeholder">
+          <div v-else class="qr-placeholder">
             <QrIcon />
-            <span>{{ $t('configCard.configPreparing') }}</span>
-            <small>{{ $t('configCard.configPreparingHint') }}</small>
+            <span>{{ unavailableTitle }}</span>
+            <small>{{ unavailableHint }}</small>
           </div>
           <div v-if="qrItem.hasChunks" class="qr-overlay">
             <EyeIcon />
@@ -75,7 +76,7 @@
           </div>
         </div>
         <div
-          v-if="qrItem.hasChunks && qrItem.chunkCount > 1 && activeQrKey === `vpn-${node.id}`"
+          v-if="qrItem.hasChunks && qrItem.chunkCount > 1 && activeQrKey === qrKey"
           class="chunk-dots"
         >
           <span
@@ -84,7 +85,7 @@
             :class="['chunk-dot', i - 1 === qrItem.idx && 'active']"
           />
         </div>
-        <p v-if="qrItem.hasChunks && activeQrKey === `vpn-${node.id}`" class="hint">
+        <p v-if="qrItem.hasChunks && activeQrKey === qrKey" class="hint">
           {{ $t('configCard.scanHintVpn') }}
           <template v-if="qrItem.chunkCount > 1">
             &nbsp;·&nbsp;{{ $t('configCard.part') }} {{ qrItem.idx + 1 }}/{{ qrItem.chunkCount }}
@@ -109,17 +110,22 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { DownloadIcon, CopyIcon, CheckIcon, QrIcon, EyeIcon } from '../icons'
-import type { UserNode, QrMapItem } from '../api/userPage'
+import { DownloadIcon, CopyIcon, CheckIcon, QrIcon, EyeIcon, WarningIcon } from '../icons'
+import type { QrMapItem, UserNode } from '../api/userPage'
+import { deviceCardQrKey, deviceConfigUrl, deviceQrUrl } from '../utils/deviceUrls'
 
 const { t } = useI18n()
 
 const props = defineProps<{
   tab: 'awg' | 'vpn'
+  /** Owner token and device id: the configuration belongs to this device, never to a node alone. */
+  token: string
+  deviceId: string
   node: UserNode
-  userId: string
   activeQrKey: string | null
   qrItem: QrMapItem
+  /** The account is not active: configurations stay hidden, deletions remain possible. */
+  inactive: boolean
 }>()
 
 defineEmits<{
@@ -127,20 +133,36 @@ defineEmits<{
   copy: [node: UserNode]
 }>()
 
+/** Unique to this device *and* node, so two devices never share an open-QR state. */
+const qrKey = computed(() => deviceCardQrKey(props.tab, props.deviceId, props.node.id))
+
 const statusReady = computed(() =>
   props.tab === 'awg' ? props.node.ready : props.node.ready && !!props.node.vpn_uri,
 )
 
-const hasActions = computed(() => (props.tab === 'awg' ? props.node.ready : !!props.node.vpn_uri))
+/** A later failed sync of an already acknowledged node: worth saying, not worth blocking. */
+const syncWarning = computed(() => props.node.status === 'error' && props.node.ready)
+
+const hasActions = computed(
+  () => !props.inactive && (props.tab === 'awg' ? props.node.ready : !!props.node.vpn_uri),
+)
 
 const downloadHref = computed(() =>
-  props.tab === 'awg'
-    ? `/pub/u/${props.userId}/config/awg/${props.node.id}`
-    : `/pub/u/${props.userId}/config/vpn/${props.node.id}`,
+  deviceConfigUrl(props.token, props.deviceId, props.tab, props.node.id),
 )
+
+const awgQrUrl = computed(() => deviceQrUrl(props.token, props.deviceId, 'awg', props.node.id))
 
 const downloadLabel = computed(() =>
   props.tab === 'awg' ? t('configCard.downloadConf') : t('configCard.downloadVpn'),
+)
+
+const unavailableTitle = computed(() =>
+  props.inactive ? t('configCard.inactive') : t('configCard.configPreparing'),
+)
+
+const unavailableHint = computed(() =>
+  props.inactive ? t('configCard.inactiveHint') : t('configCard.configPreparingHint'),
 )
 </script>
 
@@ -186,6 +208,9 @@ const downloadLabel = computed(() =>
   flex: 1;
   font-size: 14px;
   font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .node-status {
   flex-shrink: 0;
@@ -215,6 +240,30 @@ const downloadLabel = computed(() =>
   flex-direction: column;
   align-items: stretch;
   gap: 14px;
+}
+.sync-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 9px 11px;
+  border-radius: 9px;
+  background: #fef3c7;
+  color: #92400e;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.sync-warning svg {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+@media (prefers-color-scheme: dark) {
+  .sync-warning {
+    background: rgba(251, 191, 36, 0.14);
+    color: #fbbf24;
+  }
 }
 .qr-box {
   width: 260px;

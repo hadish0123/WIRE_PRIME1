@@ -8,6 +8,12 @@ import type {
   LocalAmneziawgUsageTotals,
   TrafficPoint,
 } from './types'
+import {
+  deviceConfigPath,
+  deviceQrAmneziaPath,
+  deviceQrPath,
+  userConfigsZipPath,
+} from '../utils/deviceConfigUrls'
 
 export const operationsApi = {
   sync: () => req<null>('POST', '/sync'),
@@ -33,8 +39,14 @@ export const operationsApi = {
     ),
   getNodeLocalTraffic: (nodeId: string) =>
     req<LocalAmneziawgNodeUsageTotals>('GET', `/nodes/${nodeId}/local-traffic`),
-  fetchConfig: (uid: string, nid: string) => reqBlob(`/users/${uid}/configs/${nid}`),
-  fetchConfigZip: (uid: string) => reqBlob(`/users/${uid}/configs/zip`),
-  fetchQr: (uid: string, nid: string) => reqBlob(`/users/${uid}/qr/${nid}`),
-  fetchQrAmnezia: (uid: string, nid: string) => reqBlob(`/users/${uid}/qr-amnezia/${nid}`),
+  // Configuration downloads are always device-scoped: which device a config belongs to is named in
+  // the request, never inferred. Only the user-wide archive is device-free, because it covers every
+  // live device in one folder per device.
+  fetchDeviceConfig: (userId: string, deviceId: string, nodeId: string) =>
+    reqBlob(deviceConfigPath({ userId, deviceId, nodeId })),
+  fetchDeviceQr: (userId: string, deviceId: string, nodeId: string) =>
+    reqBlob(deviceQrPath({ userId, deviceId, nodeId })),
+  fetchDeviceQrAmnezia: (userId: string, deviceId: string, nodeId: string) =>
+    reqBlob(deviceQrAmneziaPath({ userId, deviceId, nodeId })),
+  fetchConfigZip: (uid: string) => reqBlob(userConfigsZipPath(uid)),
 }

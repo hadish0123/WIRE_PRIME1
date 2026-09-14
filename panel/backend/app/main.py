@@ -4,14 +4,22 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from .error_handlers import register_error_handlers
-from .routers import api, auth, internal_worker, remnawave, telegram_proxy, user_page
+from .routers import api, auth, internal_worker, remnawave, telegram_proxy, user_events, user_page
+from .services.events import get_hub
 
 logging.basicConfig(level=logging.INFO)
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    yield
+    # One PostgreSQL LISTEN connection per process serves every open public event stream; stopping
+    # it releases the connection and ends every stream it still holds.
+    hub = get_hub()
+    await hub.start()
+    try:
+        yield
+    finally:
+        await hub.stop()
 
 
 app = FastAPI(title='AmneziaWG Panel', lifespan=lifespan)
@@ -23,3 +31,4 @@ app.include_router(internal_worker.router)
 app.include_router(remnawave.router)
 app.include_router(telegram_proxy.router)
 app.include_router(user_page.router)
+app.include_router(user_events.router)

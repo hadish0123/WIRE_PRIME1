@@ -77,7 +77,10 @@
     "syncError": "同步错误",
     "copyLink": "复制链接",
     "openDetails": "打开详情",
-    "details": "详情"
+    "details": "详情",
+    "devicesCount": "{count} 台设备",
+    "deviceLimit": "设备限额",
+    "deviceLimitUnlimited": "无限制"
   },
   "userDetail": {
     "kicker": "用户资料",
@@ -133,7 +136,23 @@
     "dangerZoneHint": "删除本地用户不可恢复。",
     "deleteUser": "删除本地用户",
     "placeholderTitle": "选择用户",
-    "placeholderText": "从列表中选择用户以查看详情并执行操作。"
+    "placeholderText": "从列表中选择用户以查看详情并执行操作。",
+    "devices": "设备与配置",
+    "devicesHint": "密钥、IP 和配置都属于具体设备：请选择设备与服务器。",
+    "deviceCount": "设备数量",
+    "deviceNoNodes": "该设备暂无服务器。",
+    "noDevices": "该用户暂无设备。",
+    "noDevicesHint": "用户自助页面添加设备后，配置才会出现。",
+    "inviteDevice": "发送添加设备链接",
+    "deviceLegacy": "迁移而来",
+    "labelDeviceLimit": "设备限额",
+    "labelDeviceIp": "设备 IP",
+    "labelDeviceIps": "设备 IP",
+    "labelServer": "服务器",
+    "deviceLimitHint": "0 表示无限制。该限额仅在本面板内生效。",
+    "saveDeviceLimit": "保存限额",
+    "deviceLimitRemnawave": "Remnawave",
+    "deviceLimitRemnawaveHint": "设备限额由 Remnawave 导入，此处只读。"
   },
   "userMobile": {
     "loading": "正在加载用户…",
@@ -169,7 +188,9 @@
     "unblock": "解封",
     "blockAction": "封禁",
     "delete": "删除",
-    "viewOnly": "仅查看"
+    "viewOnly": "仅查看",
+    "config": "配置",
+    "noDevices": "无设备"
   },
   "nodes": {
     "kicker": "服务器",
@@ -193,6 +214,8 @@
     "actions": "操作",
     "noPeers": "尚未分配对等连接。",
     "user": "用户",
+    "device": "设备",
+    "deviceUnknown": "设备未知",
     "ip": "IP",
     "status": "状态",
     "heartbeatError": "心跳错误",
@@ -496,6 +519,12 @@
     "limited": "已超限",
     "expired": "已过期",
     "deleted": "已删除"
+  },
+  "deviceStatus": {
+    "ready": "就绪",
+    "pending": "等待应用",
+    "error": "服务器错误",
+    "deleting": "删除中"
   },
   "nodeStage": {
     "ready": "就绪",

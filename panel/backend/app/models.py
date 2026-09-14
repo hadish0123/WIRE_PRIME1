@@ -11,6 +11,7 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Integer,
     String,
     UniqueConstraint,
@@ -110,7 +111,12 @@ class User(Base):
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
-    # Keypair shared across all nodes
+    # Local device policy. 0 means unlimited; ignored for Remnawave-managed users, which use the
+    # imported hwid_device_limit instead.
+    device_limit: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    # Legacy single-keypair columns, retained while ownership moves to Device. The operational
+    # core (devices, peers, node payloads) must not read or write these.
     public_key: Mapped[str | None] = mapped_column(String, nullable=True)
     private_key: Mapped[str | None] = mapped_column(String, nullable=True)
     vpn_ip: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -118,8 +124,62 @@ class User(Base):
     peers: Mapped[list[Peer]] = relationship(
         'Peer', back_populates='user', cascade='all, delete-orphan'
     )
+    devices: Mapped[list[Device]] = relationship(
+        'Device', back_populates='user', cascade='all, delete-orphan'
+    )
     remnawave_user: Mapped[RemnawaveUser | None] = relationship(
         'RemnawaveUser', back_populates='user', uselist=False, cascade='all, delete-orphan'
+    )
+
+
+class Device(Base):
+    """A named user-owned client identity: its own keypair, VPN IP and peers.
+
+    Deletion is a tombstone (``deleted_at``); peers and traffic history stay for accounting and the
+    device identity plus IP stay reserved until the node confirms peer removal.
+    """
+
+    __tablename__ = 'devices'
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(
+        String, ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    public_key: Mapped[str | None] = mapped_column(String, nullable=True)
+    private_key: Mapped[str | None] = mapped_column(String, nullable=True)
+    vpn_ip: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    # The finite VPN subnet is recycled: once every peer of a tombstoned device is confirmed gone,
+    # ``vpn_ip`` is cleared and the address kept here with the moment it was handed back. Historical
+    # reference only - it never reserves the address again - so the account's audit trail survives
+    # while a new device may reuse the address.
+    released_vpn_ip: Mapped[str | None] = mapped_column(String, nullable=True)
+    ip_released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Durable marker for the device that inherited the pre-migration per-user credentials. Legacy
+    # routes must resolve their device through this flag, never through the display name.
+    is_legacy_default: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    user: Mapped[User] = relationship('User', back_populates='devices')
+    # The device relationship joins on the device id alone: ownership is enforced by the composite
+    # foreign key on ``peers``, and writing only ``peers.device_id`` here keeps the ORM from
+    # competing with ``Peer.user`` over ``peers.user_id``.
+    peers: Mapped[list[Peer]] = relationship(
+        'Peer', back_populates='device', foreign_keys='Peer.device_id'
+    )
+
+    # Both are database-enforced guarantees, not service conventions: a duplicate device IP or a
+    # duplicate client public key makes node payloads ambiguous and would let a node result update
+    # the wrong device. ``NULL`` key material stays allowed (devices are created before keys exist
+    # in tests/migration fixtures) and ``NULL`` never collides in PostgreSQL or SQLite.
+    # ``uq_devices_id_user_id`` exists so ``peers`` can carry the composite ownership foreign key.
+    __table_args__ = (
+        UniqueConstraint('id', 'user_id', name='uq_devices_id_user_id'),
+        UniqueConstraint('vpn_ip', name='uq_devices_vpn_ip'),
+        UniqueConstraint('public_key', name='uq_devices_public_key'),
     )
 
 
@@ -129,6 +189,7 @@ class Peer(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
     node_id: Mapped[str] = mapped_column(String, ForeignKey('nodes.id'), nullable=False)
     user_id: Mapped[str] = mapped_column(String, ForeignKey('users.id'), nullable=False)
+    device_id: Mapped[str] = mapped_column(String, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     # pending → active once node acknowledges;
@@ -144,6 +205,9 @@ class Peer(Base):
 
     node: Mapped[Node] = relationship('Node', back_populates='peers')
     user: Mapped[User] = relationship('User', back_populates='peers')
+    device: Mapped[Device] = relationship(
+        'Device', back_populates='peers', foreign_keys='Peer.device_id'
+    )
     samples: Mapped[list[PeerTrafficSample]] = relationship(
         'PeerTrafficSample', back_populates='peer', cascade='all, delete-orphan'
     )
@@ -151,7 +215,17 @@ class Peer(Base):
         'PeerEndpointSession', back_populates='peer', cascade='all, delete-orphan'
     )
 
-    __table_args__ = (UniqueConstraint('node_id', 'user_id', name='uq_peers_node_user'),)
+    __table_args__ = (
+        UniqueConstraint('node_id', 'device_id', name='uq_peers_node_device'),
+        # Ownership consistency: the database (not just the service layer) refuses a peer whose
+        # ``user_id`` and ``device_id`` disagree, because both are used for traffic attribution and
+        # node payloads.
+        ForeignKeyConstraint(
+            ['device_id', 'user_id'],
+            ['devices.id', 'devices.user_id'],
+            name='fk_peers_device_owner',
+        ),
+    )
 
 
 class PeerTrafficSample(Base):
@@ -592,6 +666,9 @@ class NodeWithStatus(NodeSchema):
 
 class UserIn(BaseModel):
     name: str
+    # Initial local device limit. 0 means unlimited (the default); creating an account never creates
+    # devices, keys or peers for it.
+    device_limit: int = Field(default=0, ge=0)
 
 
 class UserSchema(UserIn):
@@ -629,6 +706,8 @@ class PeerSchema(BaseModel):
     created_at: datetime
     user_name: str | None = None
     node_name: str | None = None
+    device_id: str | None = None
+    device_name: str | None = None
     vpn_ip: str | None = None
     endpoint: str | None = None
     last_handshake: datetime | None = None
@@ -638,12 +717,55 @@ class PeerSchema(BaseModel):
 
 
 class PeerBrief(BaseModel):
+    """A peer row of the owner: ``id`` plus the device identity make it addressable in the UI."""
+
+    id: str
     node_id: str
     node_name: str
+    device_id: str
+    device_name: str | None = None
+    vpn_ip: str | None = None
     status: str
     last_handshake: datetime | None = None
     endpoint: str | None = None
     online: bool = False
+
+
+class DeviceNodeAvailability(BaseModel):
+    """Per-node readiness of one device, from the shared rule in ``app.services.devices``."""
+
+    node_id: str
+    node_name: str
+    status: str
+    ready: bool = False
+
+
+class AdminDevice(BaseModel):
+    """Non-secret admin view of a device: identity, aggregate status and per-node availability."""
+
+    id: str
+    name: str
+    vpn_ip: str | None = None
+    is_legacy_default: bool = False
+    status: str = 'pending'
+    created_at: datetime
+    nodes: list[DeviceNodeAvailability] = []
+
+
+class AdminUserDevices(BaseModel):
+    """One owner's device budget and devices; ``effective_device_limit`` 0 means unlimited."""
+
+    user_id: str
+    device_limit: int = 0
+    effective_device_limit: int = 0
+    device_count: int = 0
+    devices: list[AdminDevice] = []
+
+
+class LocalDeviceLimitUpdate(BaseModel):
+    """Local per-user device limit write. Non-negative; 0 means unlimited."""
+
+    device_limit: int = Field(ge=0)
 
 
 class RemnawaveUserBrief(BaseModel):
@@ -660,6 +782,7 @@ class RemnawaveUserBrief(BaseModel):
     tag: str | None = None
     traffic_used_bytes: int = 0
     traffic_limit_bytes: int = 0
+    hwid_device_limit: int | None = None
     local_amneziawg_traffic_used_bytes: int = 0
     combined_traffic_used_bytes: int = 0
     blocked_reason: str | None = None
@@ -676,6 +799,11 @@ class UserWithPeers(UserSchema):
     remnawave: RemnawaveUserBrief | None = None
     lifecycle: LocalUserLifecycle | None = None
     local_traffic: LocalAmneziawgUsageTotals | None = None
+    # Device budget and the live devices themselves, so the admin list can render device-aware rows
+    # without a second request; ``effective_device_limit`` 0 means unlimited.
+    effective_device_limit: int = 0
+    device_count: int = 0
+    devices: list[AdminDevice] = []
 
 
 class TrafficPoint(BaseModel):

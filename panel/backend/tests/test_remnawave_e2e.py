@@ -13,6 +13,7 @@ from httpx import AsyncClient
 from sqlalchemy import func, select
 
 from app.models import Peer, RemnawaveUser, RemnawaveWebhookEvent, User
+from app.services.devices import create_device
 
 API_TOKEN = 'fake-remnawave-token'
 WEBHOOK_SECRET = 'fake-remnawave-webhook-secret'
@@ -168,16 +169,10 @@ async def test_full_reconcile_imports_users_and_exposes_ui_state(
     assert users_by_name['alice']['remnawave']['status'] == 'ACTIVE'
     assert users_by_name['bob']['remnawave']['status'] == 'DISABLED'
     assert users_by_name['charlie']['remnawave']['traffic_used_bytes'] == 500_000
-    assert users_by_name['alice']['peers'] == [
-        {
-            'node_id': 'node-1',
-            'node_name': 'node-1',
-            'status': 'pending',
-            'last_handshake': None,
-            'endpoint': None,
-            'online': False,
-        }
-    ]
+    # imported accounts own nothing until a device is added: no keys and no peers yet
+    assert users_by_name['alice']['public_key'] is None
+    assert users_by_name['alice']['vpn_ip'] is None
+    assert users_by_name['alice']['peers'] == []
 
     log.info(
         'settings configured: api_token_set=True webhook_secret_set=True secrets_not_returned=True'
@@ -198,6 +193,10 @@ async def test_sync_by_uuid_status_change_updates_user(
         json=[initial],
         headers=worker_headers,
     )
+    rw_user = (await db.execute(select(RemnawaveUser))).scalar_one()
+    # the imported account has a device, so the status change has a peer to retire
+    await create_device(db, rw_user.user_id, name='laptop')
+    await db.commit()
     sync_resp = await client.post(
         '/internal/worker/remnawave/users/upsert',
         json=[changed],
@@ -206,6 +205,7 @@ async def test_sync_by_uuid_status_change_updates_user(
 
     assert create_resp.status_code == HTTPStatus.OK
     assert sync_resp.status_code == HTTPStatus.OK
+    db.expire_all()
     rw_user = (await db.execute(select(RemnawaveUser))).scalar_one()
     user = await db.get(User, rw_user.user_id)
     peer = (await db.execute(select(Peer).where(Peer.user_id == user.id))).scalar_one()
@@ -232,6 +232,9 @@ async def test_remnawave_sync_overwrites_local_lifecycle_state(
     )
     rw_user = (await db.execute(select(RemnawaveUser))).scalar_one()
     user_id = rw_user.user_id
+    # the imported account has a device, so unblocking has a peer to restore
+    await create_device(db, user_id, name='laptop')
+    await db.commit()
     user = await db.get(User, rw_user.user_id)
     peer = (await db.execute(select(Peer).where(Peer.user_id == user_id))).scalar_one()
 

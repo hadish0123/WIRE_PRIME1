@@ -5,6 +5,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.orm import selectinload
 
 from app.models import (
+    AdminUserDevices,
     LocalAmneziawgUsageDailyTotals,
     LocalAmneziawgUsageNodeDailyTotals,
     LocalAmneziawgUsageNodeTotals,
@@ -13,6 +14,7 @@ from app.models import (
     LocalAmneziawgUserLifetimeTraffic,
     LocalAmneziawgUserNodeDailyTraffic,
     LocalAmneziawgUserNodeLifetimeTraffic,
+    LocalDeviceLimitUpdate,
     LocalUserLifecycle,
     LocalUserLifecycleUpdate,
     Node,
@@ -27,6 +29,14 @@ from app.models import (
     UserWithPeers,
 )
 from app.routers.api_parts.common import DB, guard_not_remnawave_managed
+from app.services.devices import (
+    count_live_devices,
+    device_views,
+    live_device_views,
+    live_devices,
+    lock_owner,
+    owner_effective_device_limit,
+)
 from app.services.local_lifecycle import (
     apply_local_lifecycle_state,
     load_local_total_bytes,
@@ -84,7 +94,15 @@ def _local_lifecycle_brief(user: User, local_total: int) -> LocalUserLifecycle:
 
 
 async def _enqueue_sync_nodes_for_user(db: DB, user: User) -> None:
-    node_ids = sorted({peer.node_id for peer in user.peers})
+    """Queue a sync for every node that holds one of this user's peers.
+
+    Read from the database instead of from ``user.peers``: a lifecycle transition can create peer
+    rows in the same request (an unblock provisions the peers a node added while the owner was
+    blocked never got), and those nodes must be queued like any other change.
+    """
+    node_ids = sorted(
+        set((await db.execute(select(Peer.node_id).where(Peer.user_id == user.id))).scalars())
+    )
     for node_id in node_ids:
         operation = new_operation('sync_node', 'node', node_id)
         from app.routers import api as api_router
@@ -100,6 +118,8 @@ async def api_list_users(db: DB):
             await db.execute(
                 select(User).options(
                     selectinload(User.peers).selectinload(Peer.node),
+                    selectinload(User.peers).selectinload(Peer.device),
+                    selectinload(User.devices),
                     selectinload(User.remnawave_user),
                 )
             )
@@ -107,6 +127,8 @@ async def api_list_users(db: DB):
         .scalars()
         .all()
     )
+    # One node list for the whole page: per-device availability is derived from it in memory.
+    nodes = list((await db.execute(select(Node).order_by(Node.name, Node.id))).scalars().all())
     local_traffic_rows = (
         (await db.execute(select(LocalAmneziawgUserLifetimeTraffic))).scalars().all()
     )
@@ -124,10 +146,15 @@ async def api_list_users(db: DB):
     for u in rows:
         rw_brief = None
         local_traffic = local_traffic_by_user_id.get(u.id)
+        owner_devices = live_devices(u.devices)
         peer_briefs = [
             PeerBrief(
+                id=p.id,
                 node_id=p.node_id,
                 node_name=p.node.name,
+                device_id=p.device_id,
+                device_name=p.device.name,
+                vpn_ip=p.device.vpn_ip,
                 status=p.status,
                 last_handshake=p.last_handshake,
                 endpoint=p.endpoint,
@@ -153,6 +180,7 @@ async def api_list_users(db: DB):
                 tag=rw.tag,
                 traffic_used_bytes=rw.traffic_used_bytes,
                 traffic_limit_bytes=rw.traffic_limit_bytes,
+                hwid_device_limit=rw.hwid_device_limit,
                 local_amneziawg_traffic_used_bytes=local_total,
                 combined_traffic_used_bytes=rw.traffic_used_bytes + local_total,
                 blocked_reason=_remnawave_blocked_reason(rw, local_total),
@@ -172,6 +200,9 @@ async def api_list_users(db: DB):
                     u, local_traffic.total_bytes if local_traffic else 0
                 ),
                 local_traffic=local_traffic,
+                effective_device_limit=owner_effective_device_limit(u) or 0,
+                device_count=len(owner_devices),
+                devices=device_views(owner_devices, nodes, u.peers),
             )
         )
     return result
@@ -179,10 +210,57 @@ async def api_list_users(db: DB):
 
 @router.post('/users', response_model=UserSchema, status_code=201)
 async def api_add_user(data: UserIn, db: DB):
-    user = await create_local_user(db, data.name)
+    """Create a local account. It starts empty: no devices, keys or peers, only its limit budget."""
+    user = await create_local_user(db, data.name, device_limit=data.device_limit)
     await db.commit()
     await db.refresh(user)
     return user
+
+
+async def _user_devices_view(db: DB, user: User) -> AdminUserDevices:
+    """The owner's device budget plus its live devices, from freshly read device rows."""
+    return AdminUserDevices(
+        user_id=user.id,
+        device_limit=user.device_limit,
+        effective_device_limit=owner_effective_device_limit(user) or 0,
+        device_count=await count_live_devices(db, user.id),
+        devices=await live_device_views(db, user.id),
+    )
+
+
+@router.get('/users/{user_id}/devices', response_model=AdminUserDevices)
+async def api_user_devices(user_id: str, db: DB):
+    """Non-secret device view of one owner: budget, live devices and per-node availability.
+
+    Deliberately readable for blocked accounts: what a suspended account owns is an administrative
+    need, while *downloading* its configurations stays refused (``403``) in ``configs``. No key
+    material is ever part of this answer - readiness reports it, it does not expose it.
+    """
+    user = await db.get(User, user_id, options=[selectinload(User.remnawave_user)])
+    if not user:
+        raise HTTPException(status_code=404, detail='User not found')
+    return await _user_devices_view(db, user)
+
+
+@router.put('/users/{user_id}/device-limit', response_model=AdminUserDevices)
+async def api_update_device_limit(user_id: str, data: LocalDeviceLimitUpdate, db: DB):
+    """Set the local per-user device limit (``0`` = unlimited).
+
+    The owner row is locked first, which serializes this write against device creation: creation
+    checks the limit under the same lock, so a raise cannot be raced into two "free" slots and a
+    lowering cannot land between another request's check and its insert. Lowering never deletes a
+    device - it only stops further additions (`assert_device_capacity`), and a Remnawave-managed
+    owner is refused outright because its limit is imported, not local.
+    """
+    try:
+        user = await lock_owner(db, user_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail='User not found') from exc
+    await guard_not_remnawave_managed(user)
+
+    user.device_limit = data.device_limit
+    await db.commit()
+    return await _user_devices_view(db, user)
 
 
 @router.put('/users/{user_id}/block', response_model=UserSchema)
@@ -283,6 +361,13 @@ async def api_regenerate_public_link(user_id: str, db: DB):
 
 @router.delete('/users/{user_id}', status_code=204)
 async def api_delete_user(user_id: str, db: DB):
+    """Delete a local account and everything it owns, then queue node cleanup.
+
+    There is no key-material precondition: an account created after device ownership may own devices
+    and peers without ever having held the legacy per-user columns, and it must be deletable like
+    any other. The nodes that held any of its peers - every device's peers, not just one - are
+    re-synced after the commit, so the node side removes them.
+    """
     user = await db.get(
         User,
         user_id,
@@ -292,9 +377,7 @@ async def api_delete_user(user_id: str, db: DB):
         raise HTTPException(status_code=404, detail='User not found')
     await guard_not_remnawave_managed(user)
 
-    if not user.public_key:
-        raise HTTPException(status_code=400, detail='User has no public key')
-    node_ids = [peer.node_id for peer in user.peers]
+    node_ids = sorted({peer.node_id for peer in user.peers})
     await db.delete(user)
     await db.commit()
     for node_id in node_ids:

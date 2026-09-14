@@ -7,7 +7,9 @@
         <div>
           <div class="mobile-card-title">{{ primaryIdentity(user) }}</div>
           <div v-if="user.remnawave" class="mobile-card-meta">{{ remnawaveContext(user) }}</div>
-          <div class="mobile-card-sub">{{ user.vpn_ip || $t('userMobile.ipNotAssigned') }}</div>
+          <div class="mobile-card-sub">
+            {{ deviceIps(user) || $t('userMobile.ipNotAssigned') }}
+          </div>
         </div>
         <div class="mobile-card-tags">
           <Tag
@@ -123,7 +125,11 @@
         <div>
           <span>{{ $t('userMobile.nodes') }}</span>
           <div v-if="user.peers?.length" class="mobile-peer-list">
-            <span v-for="p in sortedPeers(user.peers)" :key="p.node_id" class="peer-chip">
+            <span
+              v-for="p in sortedPeers(user.peers)"
+              :key="peerKey(p.device_id, p.node_id)"
+              class="peer-chip"
+            >
               <span
                 :title="
                   p.last_handshake
@@ -144,9 +150,10 @@
               />
               <Tag
                 :severity="peerSeverity(p.status)"
-                :value="p.node_name"
+                :value="peerDeviceLabel(p)"
                 style="font-size: 0.72rem"
               />
+              <code v-if="p.vpn_ip" class="peer-endpoint">{{ p.vpn_ip }}</code>
               <code v-if="p.endpoint" class="peer-endpoint">{{ p.endpoint }}</code>
             </span>
           </div>
@@ -154,29 +161,37 @@
         </div>
         <div>
           <span>{{ $t('userMobile.configs') }}</span>
-          <div v-if="readyNodes.length" class="mobile-config-grid">
+          <div v-if="user.devices.length" class="mobile-config-grid">
+            <div v-for="device in user.devices" :key="device.id" class="mobile-device-block">
+              <div class="mobile-device-head">
+                <strong>{{ device.name }}</strong>
+                <code v-if="device.vpn_ip">{{ device.vpn_ip }}</code>
+              </div>
+              <Button
+                v-for="node in device.nodes"
+                :key="`${device.id}-${node.node_id}`"
+                :label="`${node.node_name} · ${$t('userMobile.config')}`"
+                icon="pi pi-download"
+                size="small"
+                severity="secondary"
+                outlined
+                :disabled="!node.ready"
+                @click="$emit('downloadConfig', user, device, node)"
+              />
+              <Button
+                v-for="node in device.nodes"
+                :key="`qr-${device.id}-${node.node_id}`"
+                :label="`${node.node_name} · QR`"
+                icon="pi pi-qrcode"
+                size="small"
+                severity="secondary"
+                outlined
+                :disabled="!node.ready"
+                @click="$emit('showQr', user, device, node)"
+              />
+            </div>
             <Button
-              v-for="n in readyNodes"
-              :key="n.id"
-              :label="n.name"
-              icon="pi pi-download"
-              size="small"
-              severity="secondary"
-              outlined
-              @click="$emit('downloadConfig', user, n)"
-            />
-            <Button
-              v-for="n in readyNodes"
-              :key="`qr-${n.id}`"
-              :label="`${n.name} QR`"
-              icon="pi pi-qrcode"
-              size="small"
-              severity="secondary"
-              outlined
-              @click="$emit('showQr', user, n)"
-            />
-            <Button
-              v-if="readyNodes.length > 1"
+              v-if="user.devices.length > 1"
               label="ZIP"
               icon="pi pi-file-export"
               size="small"
@@ -185,7 +200,7 @@
               @click="$emit('downloadConfigZip', user)"
             />
           </div>
-          <b v-else class="dim">{{ $t('userMobile.noNodes') }}</b>
+          <b v-else class="dim">{{ $t('userMobile.noDevices') }}</b>
         </div>
       </div>
 
@@ -251,14 +266,14 @@ import {
   remnawaveBlockedReasonSeverity,
 } from '../../utils/status'
 import { fmtHandshake, fmtDate, fmtBytes, formatDateTime } from '../../utils/format'
-import type { Node, Peer, User } from '../../api'
+import { peerRowKey } from '../../utils/deviceConfigUrls'
+import type { AdminDevice, DeviceNodeAvailability, Peer, User } from '../../api'
 
 const { t } = useI18n()
 
 defineProps<{
   users: User[]
   loading: boolean
-  readyNodes: Node[]
 }>()
 
 defineEmits<{
@@ -267,10 +282,26 @@ defineEmits<{
   confirmDelete: [event: Event, user: User]
   showTraffic: [user: User]
   copyUserLink: [user: User]
-  downloadConfig: [user: User, node: Node]
+  downloadConfig: [user: User, device: AdminDevice, node: DeviceNodeAvailability]
   downloadConfigZip: [user: User]
-  showQr: [user: User, node: Node]
+  showQr: [user: User, device: AdminDevice, node: DeviceNodeAvailability]
 }>()
+
+/** Every device IP of the owner; there is no single account-wide address any more. */
+function deviceIps(user: User): string {
+  return user.devices
+    .map((device) => device.vpn_ip)
+    .filter((ip): ip is string => !!ip)
+    .join(', ')
+}
+
+function peerKey(deviceId: string | null, nodeId: string): string {
+  return peerRowKey(deviceId, nodeId)
+}
+
+function peerDeviceLabel(peer: Peer): string {
+  return peer.device_name ? `${peer.device_name} · ${peer.node_name}` : peer.node_name
+}
 
 function syncSeverity(status: string): string {
   if (status === 'synced') return 'success'
@@ -340,6 +371,9 @@ function compareText(left: string | null | undefined, right: string | null | und
 
 function sortedPeers(peers: Peer[]): Peer[] {
   return [...peers].sort((left, right) => {
+    const deviceDiff = compareText(left.device_name, right.device_name)
+    if (deviceDiff !== 0) return deviceDiff
+
     const nameDiff = compareText(left.node_name, right.node_name)
     if (nameDiff !== 0) return nameDiff
 
@@ -450,6 +484,25 @@ function sortedPeers(peers: Peer[]): Peer[] {
 .mobile-config-grid {
   display: grid;
   gap: 0.45rem;
+}
+
+.mobile-device-block {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.55rem;
+  border: 1px solid var(--app-border);
+  border-radius: 0.7rem;
+}
+
+.mobile-device-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.mobile-device-head code {
+  font-size: 0.72rem;
 }
 
 .mobile-card-actions {

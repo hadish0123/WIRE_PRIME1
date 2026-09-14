@@ -6,6 +6,7 @@
     "dev": "vite",
     "build": "vue-tsc && vite build",
     "preview": "vite preview",
+    "test": "node --test tests/deviceConfigUrls.test.mts",
     "lint": "eslint src/",
     "format": "prettier --write src/"
   },

@@ -39,6 +39,8 @@ def snapshot(node_id: str = 'node-1') -> dict[str, Any]:
                 'peer_id': 'peer-1',
                 'user_id': 'user-1',
                 'user_name': 'Alice',
+                'device_id': 'device-1',
+                'device_name': 'Default',
                 'public_key': 'pub-1',
                 'allowed_ip': '10.8.0.2',
                 'psk_key': 'psk-1',
@@ -49,6 +51,8 @@ def snapshot(node_id: str = 'node-1') -> dict[str, Any]:
                 'peer_id': 'peer-2',
                 'user_id': 'user-2',
                 'user_name': 'Bob',
+                'device_id': 'device-2',
+                'device_name': 'Default',
                 'public_key': 'pub-2',
                 'allowed_ip': '10.8.0.3',
                 'psk_key': 'psk-2',
@@ -57,6 +61,38 @@ def snapshot(node_id: str = 'node-1') -> dict[str, Any]:
             },
         ],
     }
+
+
+def two_device_snapshot(node_id: str = 'node-1') -> dict[str, Any]:
+    """One owner with two devices, which is what the device ownership model sends."""
+    snapshot_data = snapshot(node_id)
+    snapshot_data['peers'] = [
+        {
+            'peer_id': 'peer-laptop',
+            'user_id': 'user-1',
+            'user_name': 'Alice',
+            'device_id': 'device-laptop',
+            'device_name': 'laptop',
+            'public_key': 'pub-laptop',
+            'allowed_ip': '10.8.0.2',
+            'psk_key': 'psk-laptop',
+            'status': 'pending',
+            'is_blocked': False,
+        },
+        {
+            'peer_id': 'peer-phone',
+            'user_id': 'user-1',
+            'user_name': 'Alice',
+            'device_id': 'device-phone',
+            'device_name': 'phone',
+            'public_key': 'pub-phone',
+            'allowed_ip': '10.8.0.3',
+            'psk_key': 'psk-phone',
+            'status': 'pending',
+            'is_blocked': False,
+        },
+    ]
+    return snapshot_data
 
 
 class FakeBackend:
@@ -268,6 +304,37 @@ async def test_sync_node_skips_peer_changes_on_zero_diff() -> None:
 
     assert result.ok is True
     assert not any(call[0] == 'put_peers' for call in node.calls)
+    assert not any(call[0] == 'delete_peer' for call in node.calls)
+
+
+async def test_sync_node_provisions_two_devices_of_one_owner_independently() -> None:
+    """One owner with two devices: peers are keyed by public key, not by user."""
+    backend = FakeBackend()
+    node = FakeNode()
+    node.status_peers = []
+    backend.snapshots['node-1'] = two_device_snapshot()
+    handler = CommandHandler(backend, node)
+
+    result = await handler.handle(command('sync_node'))
+
+    assert result.ok is True
+    put_peers_calls = [call for call in node.calls if call[0] == 'put_peers']
+    assert len(put_peers_calls) == 1
+    assert sorted(put_peers_calls[0][3], key=lambda peer: peer['public_key']) == [
+        {
+            'public_key': 'pub-laptop',
+            'allowed_ip': '10.8.0.2',
+            'psk_key': 'psk-laptop',
+            'name': 'Alice',
+        },
+        {
+            'public_key': 'pub-phone',
+            'allowed_ip': '10.8.0.3',
+            'psk_key': 'psk-phone',
+            'name': 'Alice',
+        },
+    ]
+    # neither peer of the owner shadows or removes the other
     assert not any(call[0] == 'delete_peer' for call in node.calls)
 
 

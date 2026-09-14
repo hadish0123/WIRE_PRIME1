@@ -152,38 +152,110 @@
       </div>
     </section>
 
-    <section class="detail-section">
+    <section class="detail-section detail-section--accent" data-testid="user-devices">
       <div class="section-header compact-section-header">
-        <h4>{{ $t('userDetail.configsAndQr') }}</h4>
-        <p>{{ $t('userDetail.configsHint') }}</p>
+        <h4>{{ $t('userDetail.devices') }}</h4>
+        <p>{{ $t('userDetail.devicesHint') }}</p>
       </div>
-      <div v-if="readyNodes.length" class="config-node-list">
-        <article v-for="node in readyNodes" :key="node.id" class="config-node-card">
-          <div>
-            <strong>{{ node.name }}</strong>
-            <code>{{ node.server_endpoint }}</code>
+
+      <div class="detail-grid">
+        <div>
+          <span>{{ $t('userDetail.deviceCount') }}</span
+          ><b>{{ user.device_count }}</b>
+        </div>
+        <div>
+          <span>{{ $t('userDetail.labelDeviceLimit') }}</span
+          ><b>{{ deviceLimitLabel(user) }}</b>
+        </div>
+      </div>
+
+      <div v-if="user.remnawave" class="device-limit-note">
+        <Tag severity="info" :value="$t('userDetail.deviceLimitRemnawave')" />
+        <span>{{ $t('userDetail.deviceLimitRemnawaveHint') }}</span>
+      </div>
+
+      <div v-else class="device-limit-form" data-testid="device-limit-form">
+        <label>
+          <span>{{ $t('userDetail.labelDeviceLimit') }}</span>
+          <input
+            v-model.number="deviceLimitDraft"
+            type="number"
+            min="0"
+            step="1"
+            :disabled="savingDeviceLimit"
+            @keyup.enter="submitDeviceLimit(user)"
+          />
+        </label>
+        <div class="device-limit-actions">
+          <Button
+            :label="$t('userDetail.saveDeviceLimit')"
+            icon="pi pi-save"
+            size="small"
+            :loading="savingDeviceLimit"
+            :disabled="savingDeviceLimit"
+            @click="submitDeviceLimit(user)"
+          />
+          <small class="device-limit-hint">{{ $t('userDetail.deviceLimitHint') }}</small>
+        </div>
+        <Message v-if="deviceLimitError" severity="error" :closable="false">
+          {{ deviceLimitError }}
+        </Message>
+      </div>
+
+      <div v-if="user.devices.length" class="device-list">
+        <article v-for="device in user.devices" :key="device.id" class="device-card">
+          <div class="device-head">
+            <div>
+              <strong>{{ device.name }}</strong>
+              <code>{{ device.vpn_ip || '—' }}</code>
+            </div>
+            <div class="device-tags">
+              <Tag
+                :severity="deviceStatusSeverity(device.status)"
+                :value="deviceStatusLabel(device.status)"
+              />
+              <Tag
+                v-if="device.is_legacy_default"
+                severity="secondary"
+                :value="$t('userDetail.deviceLegacy')"
+              />
+            </div>
           </div>
-          <div class="config-node-actions">
-            <Button
-              icon="pi pi-download"
-              :label="$t('userDetail.config')"
-              size="small"
-              text
-              severity="secondary"
-              @click="$emit('downloadConfig', user, node)"
-            />
-            <Button
-              icon="pi pi-qrcode"
-              :label="$t('userDetail.qr')"
-              size="small"
-              text
-              severity="secondary"
-              @click="$emit('showQr', user, node)"
-            />
+          <div v-if="device.nodes.length" class="device-node-list">
+            <div v-for="node in device.nodes" :key="node.node_id" class="device-node-row">
+              <div class="device-node-identity">
+                <strong>{{ node.node_name }}</strong>
+                <Tag
+                  :severity="deviceStatusSeverity(node.status)"
+                  :value="deviceStatusLabel(node.status)"
+                />
+              </div>
+              <div class="config-node-actions">
+                <Button
+                  icon="pi pi-download"
+                  :label="$t('userDetail.config')"
+                  size="small"
+                  text
+                  severity="secondary"
+                  :disabled="!node.ready"
+                  @click="$emit('downloadConfig', user, device, node)"
+                />
+                <Button
+                  icon="pi pi-qrcode"
+                  :label="$t('userDetail.qr')"
+                  size="small"
+                  text
+                  severity="secondary"
+                  :disabled="!node.ready"
+                  @click="$emit('showQr', user, device, node)"
+                />
+              </div>
+            </div>
           </div>
+          <div v-else class="drawer-empty">{{ $t('userDetail.deviceNoNodes') }}</div>
         </article>
         <Button
-          v-if="readyNodes.length > 1"
+          v-if="user.devices.length > 1"
           :label="$t('userDetail.downloadZip')"
           icon="pi pi-file-export"
           severity="secondary"
@@ -191,7 +263,18 @@
           @click="$emit('downloadConfigZip', user)"
         />
       </div>
-      <div v-else class="drawer-empty">{{ $t('userDetail.noReadyNodes') }}</div>
+      <div v-else class="drawer-empty device-empty">
+        <span>{{ $t('userDetail.noDevices') }}</span>
+        <span>{{ $t('userDetail.noDevicesHint') }}</span>
+        <Button
+          :label="$t('userDetail.inviteDevice')"
+          icon="pi pi-link"
+          size="small"
+          severity="secondary"
+          outlined
+          @click="$emit('copyUserLink', user)"
+        />
+      </div>
     </section>
 
     <section class="detail-section">
@@ -204,8 +287,8 @@
           ><code>{{ user.id }}</code>
         </div>
         <div>
-          <span>{{ $t('userDetail.labelVpnIp') }}</span
-          ><b>{{ user.vpn_ip || '—' }}</b>
+          <span>{{ $t('userDetail.labelDeviceIps') }}</span
+          ><b>{{ deviceIpsLabel(user) }}</b>
         </div>
         <div>
           <span>{{ $t('userDetail.labelPublicKey') }}</span
@@ -227,15 +310,27 @@
         <h4>{{ $t('userDetail.nodes') }}</h4>
       </div>
       <div v-if="user.peers.length" class="peer-detail-list">
-        <article v-for="peer in sortedPeers" :key="peer.node_id" class="peer-detail-card">
+        <article
+          v-for="peer in sortedPeers"
+          :key="peerKey(peer.device_id, peer.node_id)"
+          class="peer-detail-card"
+        >
           <div class="peer-head">
-            <strong>{{ peer.node_name }}</strong>
+            <strong>{{ peerDeviceLabel(peer) }}</strong>
             <Tag
               :severity="peerSeverity(peer.status, user.is_blocked)"
               :value="peerLabel(peer.status, user.is_blocked)"
             />
           </div>
           <div class="detail-grid detail-grid--single">
+            <div>
+              <span>{{ $t('userDetail.labelDeviceIp') }}</span
+              ><b>{{ peer.vpn_ip || '—' }}</b>
+            </div>
+            <div>
+              <span>{{ $t('userDetail.labelServer') }}</span
+              ><b>{{ peer.node_name }}</b>
+            </div>
             <div>
               <span>{{ $t('userDetail.labelOnline') }}</span
               ><b>{{
@@ -345,20 +440,23 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Button from 'primevue/button'
+import Message from 'primevue/message'
 import Tag from 'primevue/tag'
 import { fmtBytes, fmtDate, fmtHandshake, formatDateTime } from '../../utils/format'
 import { peerLabel, peerSeverity } from '../../utils/status'
-import type { Node, User } from '../../api'
+import { peerRowKey } from '../../utils/deviceConfigUrls'
+import type { AdminDevice, DeviceNodeAvailability, Peer, User } from '../../api'
 
 const { t } = useI18n()
 
 const props = defineProps<{
   user: User | null
-  readyNodes: Node[]
   syncingUser: boolean
+  savingDeviceLimit: boolean
+  deviceLimitError: string | null
 }>()
 
 const emit = defineEmits<{
@@ -378,11 +476,71 @@ const emit = defineEmits<{
     },
   ]
   resetTraffic: [user: User]
-  downloadConfig: [user: User, node: Node]
+  downloadConfig: [user: User, device: AdminDevice, node: DeviceNodeAvailability]
   downloadConfigZip: [user: User]
-  showQr: [user: User, node: Node]
+  showQr: [user: User, device: AdminDevice, node: DeviceNodeAvailability]
+  saveDeviceLimit: [user: User, deviceLimit: number]
   syncRemnawaveUser: [user: User]
 }>()
+
+// Device status strings come from the shared readiness rule in the backend; the label falls back to
+// the raw value so an unknown status is still readable instead of rendering a missing-key string.
+const DEVICE_STATUS_KEYS: Record<string, string> = {
+  ready: 'deviceStatus.ready',
+  pending: 'deviceStatus.pending',
+  error: 'deviceStatus.error',
+  deleting: 'deviceStatus.deleting',
+}
+
+// The local device-limit draft is seeded from the *local* column: that is the field the PUT writes
+// and the one an operator edits. The effective limit (which for a Remnawave owner is the imported
+// one) is what gets displayed next to it.
+const deviceLimitDraft = ref(0)
+
+watch(
+  () => [props.user?.id, props.user?.device_limit] as const,
+  () => {
+    deviceLimitDraft.value = props.user?.device_limit ?? 0
+  },
+  { immediate: true },
+)
+
+function submitDeviceLimit(user: User) {
+  const parsed = Number(deviceLimitDraft.value)
+  const limit = Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 0
+  deviceLimitDraft.value = limit
+  emit('saveDeviceLimit', user, limit)
+}
+
+/** ``0`` means unlimited on both sides; a Remnawave owner is judged by its imported limit only. */
+function deviceLimitLabel(user: User): string {
+  const limit = user.remnawave ? user.remnawave.hwid_device_limit ?? 0 : user.effective_device_limit
+  return limit > 0 ? String(limit) : t('userDetail.noLimit')
+}
+
+function deviceIpsLabel(user: User): string {
+  const ips = user.devices.map((device) => device.vpn_ip).filter((ip): ip is string => !!ip)
+  return ips.length ? ips.join(', ') : '—'
+}
+
+function deviceStatusLabel(status: string): string {
+  const key = DEVICE_STATUS_KEYS[status]
+  return key ? t(key) : status
+}
+
+function deviceStatusSeverity(status: string): string {
+  if (status === 'ready') return 'success'
+  if (status === 'error' || status === 'deleting') return 'danger'
+  return 'warn'
+}
+
+function peerKey(deviceId: string | null, nodeId: string): string {
+  return peerRowKey(deviceId, nodeId)
+}
+
+function peerDeviceLabel(peer: Peer): string {
+  return peer.device_name ? `${peer.device_name} · ${peer.node_name}` : peer.node_name
+}
 
 function formatDateTimeOrDash(iso?: string | null): string {
   return iso ? formatDateTime(iso) : '—'
@@ -508,7 +666,12 @@ function compareText(left: string | null | undefined, right: string | null | und
 const sortedPeers = computed(() => {
   if (!props.user) return []
 
+  // Ordered by device first: one owner holds several peers on one node, so the device is what makes
+  // a peer row unique and keeps an owner's devices grouped instead of interleaved.
   return [...props.user.peers].sort((left, right) => {
+    const deviceDiff = compareText(left.device_name, right.device_name)
+    if (deviceDiff !== 0) return deviceDiff
+
     const nameDiff = compareText(left.node_name, right.node_name)
     if (nameDiff !== 0) return nameDiff
 
@@ -652,13 +815,54 @@ const sortedPeers = computed(() => {
   text-transform: uppercase;
 }
 
-.config-node-list,
+.device-limit-form {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.device-limit-form label {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.device-limit-form input {
+  width: 100%;
+  min-height: 2.5rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--app-border-strong);
+  border-radius: 0.8rem;
+  background: var(--app-shell-solid);
+  color: var(--app-text);
+}
+
+.device-limit-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.device-limit-hint,
+.device-limit-note span {
+  color: var(--app-text-muted);
+  font-size: 0.78rem;
+}
+
+.device-limit-note {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.device-list,
+.device-node-list,
 .peer-detail-list {
   display: grid;
   gap: 0.6rem;
 }
 
-.config-node-card,
+.device-card,
 .peer-detail-card {
   display: grid;
   gap: 0.6rem;
@@ -668,12 +872,35 @@ const sortedPeers = computed(() => {
   background: color-mix(in srgb, var(--app-shell-solid) 80%, transparent);
 }
 
-.config-node-card {
-  grid-template-columns: minmax(0, 1fr) auto;
+.device-head,
+.device-node-identity {
+  display: flex;
   align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem;
 }
 
-.config-node-card strong,
+.device-tags {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.device-node-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.device-empty {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.device-card strong,
 .peer-detail-card strong {
   display: block;
   margin-bottom: 0.25rem;
@@ -741,7 +968,7 @@ const sortedPeers = computed(() => {
 
 @media (max-width: 640px) {
   .detail-grid,
-  .config-node-card {
+  .device-node-row {
     grid-template-columns: 1fr;
   }
 }

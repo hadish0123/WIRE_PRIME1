@@ -1,4 +1,4 @@
-import type { Node, User } from '../api/types'
+import type { AdminDevice, DeviceNodeAvailability, Node, Peer, User } from '../api/types'
 
 const now = Date.now()
 
@@ -115,7 +115,8 @@ function makeMockUser(index: number, scenario: UserScenario): User {
   const expired = index % 17 === 0
   const expireAt = new Date(now + (index % 9 === 0 ? 5 : 45) * 24 * 60 * 60 * 1000).toISOString()
   const longName = index % 10 === 0 ? '-very-long-operator-name-with-region-and-team' : ''
-  const telegramUsername = index % 6 === 0 || index % 2 === 0 ? null : `remnawave_${String(n).padStart(3, '0')}`
+  const telegramUsername =
+    index % 6 === 0 || index % 2 === 0 ? null : `remnawave_${String(n).padStart(3, '0')}`
   const telegramId = index % 6 === 0 ? null : index % 2 === 0 ? 5_149_087_582 + n : null
   const telegramUrl =
     telegramUsername !== null
@@ -124,13 +125,98 @@ function makeMockUser(index: number, scenario: UserScenario): User {
         ? `tg://user?id=${telegramId}`
         : null
 
+  const userId = `mock-user-${String(n).padStart(3, '0')}`
+  const laptopIp = `10.66.${Math.floor(n / 250)}.${(n % 240) + 10}`
+  const phoneIp = `10.67.${Math.floor(n / 250)}.${(n % 240) + 10}`
+  const nodesOf = (ready: boolean): DeviceNodeAvailability[] => [
+    {
+      node_id: 'node-amsterdam',
+      node_name: 'Amsterdam edge',
+      status: ready ? 'ready' : blocked ? 'deleting' : 'pending',
+      ready,
+    },
+    {
+      node_id: 'node-singapore',
+      node_name: 'Singapore relay',
+      status: ready ? 'ready' : blocked ? 'deleting' : 'pending',
+      ready,
+    },
+  ]
+  const laptop: AdminDevice = {
+    id: `mock-device-${String(n).padStart(3, '0')}-laptop`,
+    name: 'laptop',
+    vpn_ip: laptopIp,
+    is_legacy_default: true,
+    status: blocked ? 'pending' : 'ready',
+    created_at: new Date(now - n * 24 * 60 * 60 * 1000).toISOString(),
+    nodes: nodesOf(!blocked),
+  }
+  // Every fourth mock owner holds a second device, so the multi-device paths (peer keys, per-device
+  // IPs, a pending second configuration) are visible in the scenario preview too.
+  const secondDevice: AdminDevice | null =
+    index % 4 === 0
+      ? {
+          id: `mock-device-${String(n).padStart(3, '0')}-phone`,
+          name: 'phone',
+          vpn_ip: phoneIp,
+          is_legacy_default: false,
+          status: 'pending',
+          created_at: new Date(now - index * 60_000).toISOString(),
+          nodes: nodesOf(false),
+        }
+      : null
+  const devices: AdminDevice[] = secondDevice ? [laptop, secondDevice] : [laptop]
+  // A local mock owner gets a real local budget now and then; Remnawave ones are judged by the
+  // imported limit instead, so their local column stays 0.
+  const localDeviceLimit = index % 7 === 0 ? 1 : 0
+  const peers: Peer[] = [
+    {
+      id: `mock-peer-${n}-laptop-amsterdam`,
+      node_id: 'node-amsterdam',
+      node_name: 'Amsterdam edge',
+      device_id: laptop.id,
+      device_name: laptop.name,
+      vpn_ip: laptopIp,
+      status: blocked ? 'pending_delete' : 'active',
+      last_handshake: index % 4 === 0 ? new Date(now - index * 45_000).toISOString() : null,
+      endpoint: index % 4 === 0 ? `198.51.100.${n}:49320` : null,
+      online: index % 4 === 0,
+    },
+    {
+      id: `mock-peer-${n}-laptop-singapore`,
+      node_id: 'node-singapore',
+      node_name: 'Singapore relay',
+      device_id: laptop.id,
+      device_name: laptop.name,
+      vpn_ip: laptopIp,
+      status: blocked ? 'pending_delete' : 'active',
+      last_handshake: index % 6 === 0 ? new Date(now - index * 60_000).toISOString() : null,
+      endpoint: index % 6 === 0 ? `203.0.113.${n}:51120` : null,
+      online: index % 6 === 0,
+    },
+  ]
+  if (secondDevice) {
+    peers.push({
+      id: `mock-peer-${n}-phone-amsterdam`,
+      node_id: 'node-amsterdam',
+      node_name: 'Amsterdam edge',
+      device_id: secondDevice.id,
+      device_name: secondDevice.name,
+      vpn_ip: phoneIp,
+      status: 'pending',
+      last_handshake: null,
+      endpoint: null,
+      online: false,
+    })
+  }
+
   return {
-    id: `mock-user-${String(n).padStart(3, '0')}`,
+    id: userId,
     public_token: `mock-token-${String(n).padStart(3, '0')}`,
     name: `${remnawave ? 'rw' : 'local'}-user-${String(n).padStart(3, '0')}${longName}`,
     created_at: new Date(now - n * 24 * 60 * 60 * 1000).toISOString(),
     public_key: `mock-public-key-${n}`,
-    vpn_ip: `10.66.${Math.floor(n / 250)}.${(n % 240) + 10}`,
+    vpn_ip: laptopIp,
     is_blocked: blocked || expired,
     lifecycle_status: blocked ? 'blocked' : expired ? 'expired' : 'active',
     expire_at: remnawave
@@ -142,27 +228,14 @@ function makeMockUser(index: number, scenario: UserScenario): User {
     traffic_reset_policy: 'manual',
     traffic_reset_at: null,
     online: index % 4 === 0,
-    peers: [
-      {
-        node_id: 'node-amsterdam',
-        node_name: 'Amsterdam edge',
-        status: blocked ? 'pending_delete' : 'active',
-        last_handshake: index % 4 === 0 ? new Date(now - index * 45_000).toISOString() : null,
-        endpoint: index % 4 === 0 ? `198.51.100.${n}:49320` : null,
-        online: index % 4 === 0,
-      },
-      {
-        node_id: 'node-singapore',
-        node_name: 'Singapore relay',
-        status: blocked ? 'pending_delete' : 'active',
-        last_handshake: index % 6 === 0 ? new Date(now - index * 60_000).toISOString() : null,
-        endpoint: index % 6 === 0 ? `203.0.113.${n}:51120` : null,
-        online: index % 6 === 0,
-      },
-    ],
+    peers,
+    device_limit: remnawave ? 0 : localDeviceLimit,
+    effective_device_limit: remnawave ? 3 : localDeviceLimit,
+    device_count: devices.length,
+    devices,
     local_traffic: {
       source: 'local_amneziawg',
-      user_id: `mock-user-${String(n).padStart(3, '0')}`,
+      user_id: userId,
       rx_bytes: n * 1024 * 1024 * 13,
       tx_bytes: n * 1024 * 1024 * 7,
       total_bytes: n * 1024 * 1024 * 20,
@@ -180,7 +253,7 @@ function makeMockUser(index: number, scenario: UserScenario): User {
           blocked_reason: expired ? 'expired' : blocked ? 'blocked' : null,
         },
     remnawave: remnawave
-        ? {
+      ? {
           uuid: `11111111-2222-4${String(index).padStart(3, '0').slice(-3)}-8${String(index).padStart(3, '0').slice(-3)}-aaaaaaaa${String(n).padStart(4, '0')}`,
           username: `remnawave_${String(n).padStart(3, '0')}`,
           display_name: null,
@@ -194,6 +267,7 @@ function makeMockUser(index: number, scenario: UserScenario): User {
           tag: index % 5 === 0 ? 'partner' : 'retail',
           traffic_used_bytes: n * 1024 * 1024 * 90,
           traffic_limit_bytes: 100 * 1024 * 1024 * 1024,
+          hwid_device_limit: 3,
           local_amneziawg_traffic_used_bytes: n * 1024 * 1024 * 20,
           combined_traffic_used_bytes: n * 1024 * 1024 * 110,
           blocked_reason: expired ? 'expired' : blocked ? 'disabled' : null,

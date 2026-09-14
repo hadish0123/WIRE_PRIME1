@@ -7,6 +7,7 @@ from sqlalchemy import select
 
 from app.models import (
     AsyncOperation,
+    Device,
     LocalAmneziawgTrafficDelta,
     LocalAmneziawgTrafficSettings,
     LocalAmneziawgUserDailyTraffic,
@@ -20,6 +21,7 @@ from app.models import (
     RemnawaveUser,
     User,
 )
+from app.services.devices import delete_device_by_id
 
 
 async def test_worker_auth_rejects_missing_or_wrong_token(client: AsyncClient, monkeypatch):
@@ -263,6 +265,8 @@ async def test_snapshots_include_worker_fields(
             'peer_id': peer.id,
             'user_id': user.id,
             'user_name': 'alice',
+            'device_id': f'{user.id}-device-Default',
+            'device_name': 'Default',
             'public_key': 'alice-public',
             'allowed_ip': '10.8.0.2',
             'psk_key': 'peer-psk',
@@ -645,7 +649,9 @@ async def test_node_sync_local_accounting_sums_multi_node_user_totals(
         url='http://agent-2:8000',
         token='node-token-2',  # noqa: S106
     )
-    second_peer = Peer(id='peer-2', node=second_node, user=user, status='active')
+    second_peer = Peer(
+        id='peer-2', node=second_node, user=user, device_id=peer.device_id, status='active'
+    )
     peer.raw_rx = 1_000
     peer.raw_tx = 2_000
     second_peer.raw_rx = 10
@@ -907,7 +913,15 @@ async def test_remnawave_reconcile_complete_marks_missing_users_and_is_idempoten
     node, _, _ = seeded_worker_state
     seen_user = User(name='seen-user')
     missing_user = User(name='missing-user')
-    missing_peer = Peer(node_id=node.id, user=missing_user, status='pending')
+    missing_device = Device(
+        id='missing-device',
+        user=missing_user,
+        name='Default',
+        public_key='missing-public',
+        private_key='missing-private',
+        vpn_ip='10.8.0.9',
+    )
+    missing_peer = Peer(node_id=node.id, user=missing_user, device=missing_device, status='pending')
     db.add_all(
         [
             seen_user,
@@ -987,3 +1001,76 @@ async def _post_sync_result(
         json={'ok': True, 'peers': peers},
         headers=worker_headers,
     )
+
+
+async def test_sync_result_cannot_resurrect_a_deleted_device_peer(
+    client: AsyncClient, db, worker_headers, seeded_worker_state
+):
+    """A node reply produced before a device deletion must never bring the deleted peer back."""
+    node, _user, peer = seeded_worker_state
+    peer_row = await db.get(Peer, peer.id)
+    peer_row.status = 'active'
+    await db.commit()
+
+    device, affected = await delete_device_by_id(db, peer.device_id)
+    await db.commit()
+    assert device is not None
+    assert affected == {node.id}
+
+    # the node still reports the peer as active: a reply from before the deletion
+    response = await _post_sync_result(
+        client,
+        worker_headers,
+        node.id,
+        [
+            {
+                'public_key': 'alice-public',
+                'status': 'active',
+                'endpoint': '203.0.113.10:54321',
+                'rx_bytes': 100,
+                'tx_bytes': 50,
+                'last_handshake': '2026-06-02T12:00:00Z',
+            }
+        ],
+    )
+    assert response.status_code == HTTPStatus.OK
+    await db.refresh(peer_row)
+    assert peer_row.status == 'pending_delete'
+
+    # only once the node stops reporting the key is the tombstoned peer confirmed removed
+    response = await _post_sync_result(client, worker_headers, node.id, [])
+    assert response.status_code == HTTPStatus.OK
+    await db.refresh(peer_row)
+    assert peer_row.status == 'deleted'
+
+
+async def test_snapshot_reads_request_no_writer_locks(
+    client: AsyncClient, worker_headers, seeded_worker_state, monkeypatch
+):
+    """Only node results take row locks; read-only snapshots must stay lock free."""
+    from app.routers.internal_worker_parts import nodes as nodes_router
+
+    real_load = nodes_router.load_node_with_peers
+    seen: list[bool] = []
+
+    async def spy(db_session, node_id, *, for_update=False):
+        seen.append(for_update)
+        return await real_load(db_session, node_id, for_update=for_update)
+
+    monkeypatch.setattr(nodes_router, 'load_node_with_peers', spy)
+    node, _user, _peer = seeded_worker_state
+
+    for path in (
+        '/internal/worker/sync/snapshot',
+        f'/internal/worker/nodes/{node.id}/sync-snapshot',
+        f'/internal/worker/nodes/{node.id}/provision-snapshot',
+    ):
+        resp = await client.get(path, headers=worker_headers)
+        assert resp.status_code == 200
+    assert seen and not any(seen)
+
+    seen.clear()
+    with patch('app.routers.internal_worker.enqueue_sync_node', new=AsyncMock()):
+        resp = await _post_sync_result(client, worker_headers, node.id, [])
+    assert resp.status_code == 200
+    assert seen == [True]

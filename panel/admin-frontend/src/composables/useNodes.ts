@@ -88,6 +88,11 @@ function compareNodePeers(left: NodePeer, right: NodePeer): number {
   const nameDiff = compareText(left.user_name, right.user_name)
   if (nameDiff !== 0) return nameDiff
 
+  // The device is part of a peer's identity, so an owner's devices stay grouped instead of being
+  // interleaved by whatever IP happens to sort first.
+  const deviceDiff = compareText(left.device_name, right.device_name)
+  if (deviceDiff !== 0) return deviceDiff
+
   const ipDiff = compareText(left.vpn_ip, right.vpn_ip)
   if (ipDiff !== 0) return ipDiff
 

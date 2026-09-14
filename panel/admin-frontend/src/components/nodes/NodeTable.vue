@@ -92,12 +92,20 @@
           :loading="!peersCache[data.id]"
           size="small"
           class="peer-table"
+          dataKey="id"
         >
           <template #empty>{{ $t('nodeTable.noPeers') }}</template>
           <Column field="user_name" :header="$t('nodeTable.user')" />
+          <Column :header="$t('nodeTable.device')">
+            <template #body="{ data: p }">
+              <span v-if="p.device_name">{{ p.device_name }}</span>
+              <span v-else class="dim">{{ $t('nodeTable.deviceUnknown') }}</span>
+            </template>
+          </Column>
           <Column field="vpn_ip" :header="$t('nodeTable.ip')">
             <template #body="{ data: p }">
-              <code>{{ p.vpn_ip }}/32</code>
+              <code v-if="p.vpn_ip">{{ p.vpn_ip }}/32</code>
+              <span v-else class="dim">—</span>
             </template>
           </Column>
           <Column field="status" :header="$t('nodeTable.status')">

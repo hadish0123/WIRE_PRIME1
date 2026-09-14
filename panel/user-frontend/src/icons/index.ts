@@ -143,3 +143,84 @@ export const ShieldTabIcon = () =>
     },
     [h('path', { d: 'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z' })],
   )
+
+export const WarningIcon = () =>
+  h(
+    'svg',
+    {
+      viewBox: '0 0 24 24',
+      fill: 'none',
+      stroke: 'currentColor',
+      strokeWidth: 2.2,
+      strokeLinecap: 'round' as const,
+      strokeLinejoin: 'round' as const,
+    },
+    [
+      h('path', {
+        d: 'M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z',
+      }),
+      h('line', { x1: 12, y1: 9, x2: 12, y2: 13 }),
+      h('line', { x1: 12, y1: 17, x2: 12.01, y2: 17 }),
+    ],
+  )
+
+export const TrashIcon = () =>
+  h(
+    'svg',
+    {
+      viewBox: '0 0 24 24',
+      fill: 'none',
+      stroke: 'currentColor',
+      strokeWidth: 2,
+      strokeLinecap: 'round' as const,
+      strokeLinejoin: 'round' as const,
+    },
+    [
+      h('polyline', { points: '3 6 5 6 21 6' }),
+      h('path', { d: 'M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6' }),
+      h('path', { d: 'M10 11v6M14 11v6' }),
+      h('path', { d: 'M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2' }),
+    ],
+  )
+
+export const PlusIcon = () =>
+  h(
+    'svg',
+    {
+      viewBox: '0 0 24 24',
+      fill: 'none',
+      stroke: 'currentColor',
+      strokeWidth: 2.4,
+      strokeLinecap: 'round' as const,
+      strokeLinejoin: 'round' as const,
+    },
+    [h('line', { x1: 12, y1: 5, x2: 12, y2: 19 }), h('line', { x1: 5, y1: 12, x2: 19, y2: 12 })],
+  )
+
+export const RefreshIcon = () =>
+  h(
+    'svg',
+    {
+      viewBox: '0 0 24 24',
+      fill: 'none',
+      stroke: 'currentColor',
+      strokeWidth: 2,
+      strokeLinecap: 'round' as const,
+      strokeLinejoin: 'round' as const,
+    },
+    [h('path', { d: 'M21 12a9 9 0 1 1-2.64-6.36' }), h('polyline', { points: '21 3 21 9 15 9' })],
+  )
+
+export const LaptopIcon = () =>
+  h(
+    'svg',
+    {
+      viewBox: '0 0 24 24',
+      fill: 'none',
+      stroke: 'currentColor',
+      strokeWidth: 1.8,
+      strokeLinecap: 'round' as const,
+      strokeLinejoin: 'round' as const,
+    },
+    [h('rect', { x: 4, y: 5, width: 16, height: 11, rx: 2 }), h('path', { d: 'M2 19h20' })],
+  )

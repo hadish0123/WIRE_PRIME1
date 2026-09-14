@@ -96,7 +96,7 @@ async def _upsert_remnawave_users(data: list[RemnawaveUserIn], db: DB):
             await db.flush()
             affected_node_ids.update(created_node_ids)
         else:
-            affected_node_ids.update(apply_remnawave_lifecycle(row, item))
+            affected_node_ids.update(await apply_remnawave_lifecycle(db, row, item))
 
         apply_remnawave_profile(row, item)
         limited_node_ids, limited_user_uuids = await enforce_remnawave_combined_limit(db, row)

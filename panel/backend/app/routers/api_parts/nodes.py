@@ -16,9 +16,10 @@ from app.models import (
     PeerSchema,
 )
 from app.routers.api_parts.common import DB
+from app.services.devices import create_pending_peers_for_node, release_device_ips
+from app.services.node_sync import load_node_with_peers
 from app.services.online import is_peer_online, online_threshold_seconds
 from app.services.operations import enqueue_operation, new_operation, operation_response
-from app.services.users import create_pending_peers_for_node
 
 router = APIRouter()
 
@@ -108,10 +109,19 @@ async def api_update_node(node_id: str, data: NodeUpdate, db: DB):
 
 @router.delete('/nodes/{node_id}', status_code=204)
 async def api_delete_node(node_id: str, db: DB):
-    node = await db.get(Node, node_id)
-    if not node:
-        raise HTTPException(status_code=404, detail='Node not found')
+    """Forget a managed node and reclaim eligible tombstoned devices' reservations.
+
+    This removes database peers, not tunnels on the detached node. Reclaim requires no live peers
+    on retained managed nodes; operators must decommission the detached node separately.
+    """
+    # Match sync results: User -> Device -> Peer before any cascading DELETE. Do not lock Node
+    # first: result writers reach its row only after ownership locks. Reclaim only the devices the
+    # loader locked, never a newcomer discovered by the cascade (FK checks still govern insertion).
+    node, peers = await load_node_with_peers(db, node_id, for_update=True)
+    device_ids = {peer.device_id for peer in peers}
     await db.delete(node)
+    await db.flush()
+    await release_device_ips(db, device_ids)
     await db.commit()
 
 
@@ -126,7 +136,9 @@ async def api_node_peers(node_id: str, db: DB):
             await db.execute(
                 select(Peer)
                 .where(Peer.node_id == node_id)
-                .options(selectinload(Peer.user), selectinload(Peer.node))
+                .options(
+                    selectinload(Peer.user), selectinload(Peer.device), selectinload(Peer.node)
+                )
             )
         )
         .scalars()
@@ -138,7 +150,8 @@ async def api_node_peers(node_id: str, db: DB):
         s.is_blocked = p.user.is_blocked
         s.user_name = p.user.name
         s.node_name = p.node.name
-        s.vpn_ip = p.user.vpn_ip
+        s.device_name = p.device.name if p.device is not None else None
+        s.vpn_ip = p.device.vpn_ip if p.device is not None else None
         s.online = is_peer_online(p, threshold_seconds)
         result.append(s)
     return result

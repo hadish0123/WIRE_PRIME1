@@ -1,8 +1,10 @@
 import io
+import re
 import zipfile
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol
+from urllib.parse import quote
 
 import segno
 
@@ -13,7 +15,23 @@ from app.crypto import (
     build_amnezia_vpn_uri,
     build_client_config,
 )
-from app.models import Node, Peer, User
+from app.models import Node, Peer
+
+
+class ClientIdentity(Protocol):
+    """The credential-bearing owner of a client configuration.
+
+    Both the frozen legacy ``User`` key columns and a ``Device`` satisfy this structurally, so the
+    builders serve either one without inventing a synthetic ``User``. Everything a config needs
+    (keypair, VPN IP, display name) lives here; nothing about ownership, limits or lifecycle does.
+    """
+
+    id: str
+    name: str
+    public_key: str | None
+    private_key: str | None
+    vpn_ip: str | None
+
 
 _NODE_VPN_ADDRESS = '10.8.0.1/24'
 _POST_UP = (
@@ -60,11 +78,11 @@ def node_mtu(node: Node) -> str:
     return node.mtu or '1376'
 
 
-def build_awg_client_config(user: User, node: Node, psk_key: str = '') -> str | None:
+def build_awg_client_config(identity: ClientIdentity, node: Node, psk_key: str = '') -> str | None:
     server_public_key = node.server_public_key
     server_endpoint = node.server_endpoint
-    private_key = user.private_key
-    vpn_ip = user.vpn_ip
+    private_key = identity.private_key
+    vpn_ip = identity.vpn_ip
     if not server_public_key or not server_endpoint or not private_key or not vpn_ip:
         return None
     return build_client_config(
@@ -80,7 +98,7 @@ def build_awg_client_config(user: User, node: Node, psk_key: str = '') -> str | 
 
 
 def build_amnezia_client_config(
-    user: User,
+    identity: ClientIdentity,
     node: Node,
     description: str,
     psk_key: str = '',
@@ -89,13 +107,13 @@ def build_amnezia_client_config(
 ) -> AWGClientConfig | None:
     server_public_key = node.server_public_key
     server_endpoint = node.server_endpoint
-    private_key = user.private_key
-    vpn_ip = user.vpn_ip
+    private_key = identity.private_key
+    vpn_ip = identity.vpn_ip
     if not server_public_key or not server_endpoint or not private_key or not vpn_ip:
         return None
     return AWGClientConfig(
         private_key=private_key,
-        public_key=user.public_key or '',
+        public_key=identity.public_key or '',
         vpn_ip=vpn_ip,
         node_public_key=server_public_key,
         node_endpoint=server_endpoint,
@@ -108,32 +126,32 @@ def build_amnezia_client_config(
 
 
 def build_user_amnezia_qr_chunks(
-    user: User,
+    identity: ClientIdentity,
     node: Node,
     description: str,
     psk_key: str = '',
 ) -> list[str] | None:
-    config = build_amnezia_client_config(user, node, description, psk_key)
+    config = build_amnezia_client_config(identity, node, description, psk_key)
     return build_amnezia_qr_chunks(config) if config else None
 
 
 def build_user_amnezia_vpn_uri(
-    user: User,
+    identity: ClientIdentity,
     node: Node,
     description: str,
     psk_key: str = '',
 ) -> str | None:
-    config = build_amnezia_client_config(user, node, description, psk_key)
+    config = build_amnezia_client_config(identity, node, description, psk_key)
     return build_amnezia_vpn_uri(config) if config else None
 
 
 def build_user_amnezia_config_json(
-    user: User,
+    identity: ClientIdentity,
     node: Node,
     description: str,
     psk_key: str = '',
 ) -> bytes | None:
-    config = build_amnezia_client_config(user, node, description, psk_key, dns='1.1.1.1')
+    config = build_amnezia_client_config(identity, node, description, psk_key, dns='1.1.1.1')
     return _build_amnezia_config_json(config) if config else None
 
 
@@ -156,69 +174,130 @@ def make_qr_svg(
 
 
 def make_awg_qr_svg(
-    user: User,
+    identity: ClientIdentity,
     node: Node,
     psk_key: str = '',
     *,
     style: QRStyle,
 ) -> bytes | None:
-    config = build_awg_client_config(user, node, psk_key)
+    config = build_awg_client_config(identity, node, psk_key)
     if not config:
         return None
     return make_qr_svg(config, style)
 
 
 def make_amnezia_qr_svg(
-    user: User,
+    identity: ClientIdentity,
     node: Node,
     description: str,
     psk_key: str = '',
     *,
     style: QRStyle,
 ) -> bytes | None:
-    chunks = build_user_amnezia_qr_chunks(user, node, description, psk_key)
+    chunks = build_user_amnezia_qr_chunks(identity, node, description, psk_key)
     if not chunks or len(chunks) > 1:
         return None
     return make_qr_svg(chunks[0], style)
 
 
-async def build_user_config_entries(
-    user: User,
-    nodes: Iterable[Node],
-    get_peer_psk: Callable[[str, str], Awaitable[str]],
-) -> list[dict[str, str | None]]:
-    result: list[dict[str, str | None]] = []
-    for node in nodes:
-        if not node.server_public_key or not node.server_endpoint:
-            result.append(
-                {
-                    'node_id': node.id,
-                    'node_name': node.name,
-                    'config': None,
-                    'reason': 'node metadata not yet cached',
-                }
-            )
-            continue
-        config = build_awg_client_config(user, node, await get_peer_psk(user.id, node.id))
-        result.append({'node_id': node.id, 'node_name': node.name, 'config': config})
-    return result
+_ARCHIVE_UNSAFE = re.compile(r'[^A-Za-z0-9._-]+')
+_MAX_ARCHIVE_COMPONENT = 64
+_MIN_LOOP_GUARD = 2
 
 
-async def build_user_configs_zip(
-    user: User,
-    nodes: Iterable[Node],
-    get_peer_psk: Callable[[str, str], Awaitable[str]],
-) -> io.BytesIO:
+def archive_component(raw: str, *, fallback: str) -> str:
+    """One safe path component for an archive entry.
+
+    Device and node names are user-controlled (Unicode allowed), so separators, spaces and control
+    characters cannot be carried into a ZIP entry name: unsafe runs collapse into ``_``. The result
+    is never empty and never contains a path separator, so an entry can only land directly inside
+    the folder this module chose for it.
+    """
+    cleaned = _ARCHIVE_UNSAFE.sub('_', raw).strip('._')[:_MAX_ARCHIVE_COMPONENT]
+    return cleaned or fallback
+
+
+def unique_archive_name(used: set[str], preferred: str) -> str:
+    """``preferred`` when free, otherwise the same name with a numeric suffix; records the result.
+
+    Name uniqueness is not guaranteed by the data - two devices may share a name, and so may two
+    nodes - while a ZIP with duplicate entry names is unusable. Callers pass the full entry path, so
+    the guarantee covers folders as well as files.
+    """
+    if preferred not in used:
+        used.add(preferred)
+        return preferred
+    stem, dot, extension = preferred.rpartition('.')
+    if not dot:
+        stem, extension = preferred, ''
+    counter = _MIN_LOOP_GUARD
+    while True:
+        candidate = f'{stem}-{counter}{dot}{extension}' if dot else f'{stem}-{counter}'
+        if candidate not in used:
+            used.add(candidate)
+            return candidate
+        counter += 1
+
+
+def device_archive_folder(device: ClientIdentity) -> str:
+    """Per-device folder for a multi-device archive: the name plus a piece of the device id.
+
+    The id fragment is what makes the folder unique, because the visible name is not: it is also
+    what identifies the device in the archive after a rename.
+    """
+    return f'{archive_component(device.name, fallback="device")}-{device.id[:8]}'
+
+
+def config_entry_name(device: ClientIdentity, node: Node, *, folder: str | None = None) -> str:
+    """Entry path for one device's config on one node, optionally inside a per-device folder."""
+    filename = (
+        f'{archive_component(device.name, fallback="device")}-'
+        f'{archive_component(node.name, fallback="node")}.conf'
+    )
+    return f'{folder}/{filename}' if folder else filename
+
+
+@dataclass(frozen=True)
+class ConfigZipEntry:
+    """One config to place in an archive: the device/node/peer it is built from, and its name."""
+
+    device: ClientIdentity
+    node: Node
+    peer: Peer
+    name: str
+
+
+def build_configs_zip(entries: Iterable[ConfigZipEntry]) -> io.BytesIO:
+    """A ZIP of the given configs, with every entry name guaranteed unique.
+
+    Callers decide *which* configs are ready (their device/node readiness rule lives in
+    ``app.services.devices``); this function only renders them. A config that cannot be built from
+    the entry's rows is skipped, never written empty.
+    """
     buf = io.BytesIO()
-    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
-        for node in nodes:
-            if not node.server_public_key or not node.server_endpoint:
+    used: set[str] = set()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as archive:
+        for entry in entries:
+            config = build_awg_client_config(entry.device, entry.node, entry.peer.psk_key or '')
+            if not config:
                 continue
-            config = build_awg_client_config(user, node, await get_peer_psk(user.id, node.id))
-            if config:
-                zf.writestr(f'{user.name}-{node.name}.conf', config)
+            archive.writestr(unique_archive_name(used, entry.name), config)
     buf.seek(0)
     return buf
+
+
+def attachment_headers(filename: str) -> dict[str, str]:
+    """A ``Content-Disposition`` that survives quotes, slashes and non-ASCII names.
+
+    The quoted ASCII fallback is stripped of anything a header cannot carry, and the full name is
+    also sent RFC 5987-encoded so clients keep the device's real Unicode name.
+    """
+    fallback = re.sub(r'[^A-Za-z0-9._-]+', '_', filename).strip('_') or 'config'
+    return {
+        'Content-Disposition': (
+            f'attachment; filename="{fallback}"; filename*=UTF-8\'\'{quote(filename, safe="")}'
+        )
+    }
 
 
 def node_interface(node: Node) -> dict[str, Any]:
@@ -234,15 +313,19 @@ def node_interface(node: Node) -> dict[str, Any]:
 
 
 def peer_payload(peer: Peer) -> dict[str, Any] | None:
+    """Desired node-side peer for a device; ``None`` when the device has no usable identity."""
     user = peer.user
-    if not user.public_key or not user.vpn_ip:
+    device = peer.device
+    if not device.public_key or not device.vpn_ip:
         return None
     return {
         'peer_id': peer.id,
         'user_id': user.id,
         'user_name': user.name,
-        'public_key': user.public_key,
-        'allowed_ip': user.vpn_ip,
+        'device_id': device.id,
+        'device_name': device.name,
+        'public_key': device.public_key,
+        'allowed_ip': device.vpn_ip,
         'psk_key': peer.psk_key or '',
         'status': peer.status,
         'is_blocked': user.is_blocked,

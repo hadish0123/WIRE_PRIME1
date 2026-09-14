@@ -55,12 +55,47 @@ export interface AsyncOperation {
 }
 
 export interface Peer {
+  id: string
   node_id: string
   node_name: string
+  // A peer is identified by its device, not by its owner: one owner can hold several devices on the
+  // same node, so (device_id, node_id) is the row key and the only unambiguous selector.
+  device_id: string
+  device_name: string | null
+  vpn_ip: string | null
   status: string
   last_handshake: string | null
   endpoint: string | null
   online: boolean
+}
+
+export interface DeviceNodeAvailability {
+  node_id: string
+  node_name: string
+  status: string
+  ready: boolean
+}
+
+export interface AdminDevice {
+  id: string
+  name: string
+  vpn_ip: string | null
+  is_legacy_default: boolean
+  status: string
+  created_at: string
+  nodes: DeviceNodeAvailability[]
+}
+
+export interface AdminUserDevices {
+  user_id: string
+  device_limit: number
+  effective_device_limit: number
+  device_count: number
+  devices: AdminDevice[]
+}
+
+export interface LocalDeviceLimitUpdate {
+  device_limit: number
 }
 
 export interface RemnawaveUserBrief {
@@ -77,6 +112,9 @@ export interface RemnawaveUserBrief {
   tag: string | null
   traffic_used_bytes: number
   traffic_limit_bytes: number
+  // The device limit imported from Remnawave: for a Remnawave-managed owner this is the *only*
+  // source of the device limit; ``null``/``0`` mean unlimited.
+  hwid_device_limit: number | null
   local_amneziawg_traffic_used_bytes: number
   combined_traffic_used_bytes: number
   blocked_reason: string | null
@@ -95,6 +133,11 @@ export interface User {
   vpn_ip: string | null
   is_blocked: boolean
   lifecycle_status: string
+  // The *local* device limit column (0 = unlimited). It is inert for a Remnawave-managed owner,
+  // whose limit comes from ``remnawave.hwid_device_limit``; see ``effective_device_limit`` for the
+  // value actually enforced.
+  device_limit: number
+  effective_device_limit: number
   expire_at: string | null
   traffic_limit_bytes: number
   traffic_reset_policy: 'manual' | 'no_reset'
@@ -105,6 +148,10 @@ export interface User {
   remnawave: RemnawaveUserBrief | null
   lifecycle?: LocalUserLifecycle | null
   local_traffic?: LocalAmneziawgUsageTotals | null
+  // Device budget and the live devices themselves. ``effective_device_limit`` 0 means unlimited;
+  // there is deliberately no single account-wide VPN IP any more - every device owns its own.
+  device_count: number
+  devices: AdminDevice[]
 }
 
 export interface LocalUserLifecycle {
@@ -205,12 +252,20 @@ export interface LocalAmneziawgUsageNodeDailyTotals extends LocalAmneziawgUsageD
 }
 
 export interface NodePeer {
+  id: string
+  node_id: string
+  user_id: string
+  // Device identity of the peer: the node view must show whose *device* a peer is and that device's
+  // own IP, because one owner can hold several peers on the same node.
+  device_id: string | null
+  device_name: string | null
+  created_at: string
   endpoint: string | null
   is_blocked: boolean
   last_handshake: string | null
   online: boolean
   user_name: string
-  vpn_ip: string
+  vpn_ip: string | null
   status: string
 }
 

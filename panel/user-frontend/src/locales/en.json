@@ -1,6 +1,8 @@
 {
   "common": {
-    "notAvailable": "—"
+    "notAvailable": "—",
+    "cancel": "Cancel",
+    "refresh": "Refresh"
   },
   "app": {
     "brand": "Amnezia"
@@ -161,6 +163,65 @@
     "copy": "Copy",
     "downloadConf": "Download .conf file",
     "downloadVpn": "Download .vpn file",
-    "part": "part"
+    "part": "part",
+    "syncWarning": "The last sync of this server reported an error. The configuration below keeps working, so downloads and the QR code stay available.",
+    "inactive": "Configuration unavailable",
+    "inactiveHint": "Downloads and QR codes are closed while access is closed, expired or over the traffic limit."
+  },
+  "devices": {
+    "eyebrow": "Connection devices",
+    "title": "My devices",
+    "subtitle": "Every device has its own keys and its own configuration on each server.",
+    "countOf": "{count} of {limit}",
+    "countUnlimited": "{count} · unlimited",
+    "unlimited": "unlimited",
+    "add": "Add device",
+    "adding": "Adding…",
+    "nameLabel": "Device name",
+    "namePlaceholder": "For example: Laptop, Phone, Work PC",
+    "nameHint": "The name is only shown to you and is used in the configuration description. Up to 64 characters.",
+    "nameErrors": {
+      "blank": "Enter a device name.",
+      "too_long": "The name is too long: 64 characters maximum.",
+      "control_chars": "The name must not contain control characters."
+    },
+    "emptyTitle": "Add your first device",
+    "emptyText": "Name the device you want to connect - for example Laptop or Phone. Its configuration appears as soon as the server confirms it, usually within a few seconds.",
+    "limitNote": "The device limit of {limit} is reached. Remove a device to free a slot.",
+    "inactiveNote": "You can view and remove your devices, but adding a device and downloading configurations is unavailable with this account state.",
+    "inactiveEmptyTitle": "No devices on this account",
+    "inactiveEmptyText": "This account has no devices to manage. Adding one needs active access: reconnect the account or contact the administrator.",
+    "pendingNote": "The server is preparing this device. Its configuration will appear here automatically.",
+    "syncWarning": "The last sync of {count} server(s) reported an error. Existing configurations keep working.",
+    "noServers": "No server is available for this device yet.",
+    "createdAt": "Added {value}",
+    "remove": "Delete",
+    "deleting": "Deleting…",
+    "deleteConfirmTitle": "Delete the device \"{name}\"?",
+    "deleteConfirmText": "Its keys and configurations are revoked on every server right away, and the device slot is freed immediately. Traffic already counted stays on the account. This cannot be undone.",
+    "deleteConfirmAction": "Delete and revoke",
+    "status": {
+      "ready": "Ready",
+      "pending": "Preparing",
+      "error": "Sync error",
+      "deleting": "Deleting"
+    },
+    "errors": {
+      "limit": "The device limit is reached. Remove a device or ask the administrator to raise the limit."
+    }
+  },
+  "refresh": {
+    "retryTitle": "Could not refresh",
+    "retryNotice": "The page kept the data it already had. It will retry automatically.",
+    "now": "Retry now"
+  },
+  "apiErrors": {
+    "not_found": "This link is no longer valid. Ask the administrator for a new one.",
+    "blocked": "Access to this account is closed, so the action was refused.",
+    "conflict": "The action was refused: the device limit is already reached.",
+    "validation": "The request was refused. Check the device name and try again.",
+    "network": "The server did not answer. Check your connection.",
+    "server": "The server could not complete the request. Try again a little later.",
+    "unknown": "Something went wrong. Try again a little later."
   }
 }

@@ -150,8 +150,9 @@
 
       <UserDetailDrawer
         :user="selectedUser"
-        :ready-nodes="readyNodes"
         :syncing-user="syncingUser"
+        :saving-device-limit="savingDeviceLimit"
+        :device-limit-error="deviceLimitError"
         @close="clearSelectedUser"
         @block="block"
         @unblock="unblock"
@@ -164,6 +165,7 @@
         @download-config="downloadConfig"
         @download-config-zip="downloadConfigZip"
         @show-qr="showQr"
+        @save-device-limit="saveDeviceLimit"
         @sync-remnawave-user="syncRemnawaveUser"
       />
     </div>
@@ -220,18 +222,8 @@ const router = useRouter()
 const toast = useToast()
 const { t } = useI18n()
 
-const {
-  users,
-  loading,
-  loadError,
-  newName,
-  addingUser,
-  readyNodes,
-  addUser,
-  block,
-  unblock,
-  confirmDelete,
-} = useUsers()
+const { users, loading, loadError, newName, addingUser, addUser, block, unblock, confirmDelete } =
+  useUsers()
 
 const query = reactive<UserListQuery>({
   search: '',
@@ -243,6 +235,8 @@ const query = reactive<UserListQuery>({
 })
 
 const syncingUser = ref(false)
+const savingDeviceLimit = ref(false)
+const deviceLimitError = ref<string | null>(null)
 
 const listResponse = computed(() => usersApi.queryLocalUsers(users.value, query))
 const visibleUsers = computed(() => listResponse.value.items)
@@ -400,6 +394,44 @@ async function regenerateLink(user: User) {
       detail: e instanceof Error ? e.message : t('toasts.error'),
       life: 4000,
     })
+  }
+}
+
+/**
+ * Save a local account's device limit (``0`` = unlimited).
+ *
+ * The answer is the authoritative device view, so the row is updated from it instead of from the
+ * submitted number: the backend is what decides the effective limit, and a Remnawave-managed owner
+ * is refused here rather than silently writing an inert column.
+ */
+async function saveDeviceLimit(user: User, deviceLimit: number) {
+  savingDeviceLimit.value = true
+  deviceLimitError.value = null
+  try {
+    const updated = await usersApi.updateDeviceLimit(user.id, deviceLimit)
+    if (updated) {
+      user.device_limit = updated.device_limit
+      user.effective_device_limit = updated.effective_device_limit
+      user.device_count = updated.device_count
+      user.devices = updated.devices
+    }
+    toast.add({
+      severity: 'success',
+      summary: t('toasts.saved'),
+      detail: user.name,
+      life: 3000,
+    })
+  } catch (e: unknown) {
+    const detail = e instanceof Error ? e.message : t('toasts.error')
+    deviceLimitError.value = detail
+    toast.add({
+      severity: 'error',
+      summary: t('toasts.error'),
+      detail,
+      life: 4000,
+    })
+  } finally {
+    savingDeviceLimit.value = false
   }
 }
 </script>

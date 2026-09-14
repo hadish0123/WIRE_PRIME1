@@ -172,7 +172,7 @@ def create_remnawave_api_token(admin_token: str) -> str:
         'POST',
         '/api/tokens',
         admin_token,
-        {'tokenName': REMNA_API_TOKEN_NAME},
+        {'name': REMNA_API_TOKEN_NAME, 'expiresInDays': 365},
     )
     print('Created Remnawave API token for Amnezia')
     return response_data(token)['token']

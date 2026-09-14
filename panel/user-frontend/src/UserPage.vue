@@ -4,9 +4,14 @@
 
     <main>
       <UserStateCard v-if="loading" state="loading" />
-      <UserStateCard v-else-if="error" state="error" :is-404="error === 404" />
+      <UserStateCard
+        v-else-if="!info"
+        state="error"
+        :is-404="error?.kind === 'not_found'"
+        :text="errorText"
+      />
 
-      <template v-else-if="info">
+      <template v-else>
         <section class="hero" :class="`hero-${info.status.code}`">
           <div>
             <p class="eyebrow">{{ $t('dashboard.eyebrow') }}</p>
@@ -17,163 +22,247 @@
             <span :class="['status-pill', info.status.code]">
               {{ $t(`statuses.${info.status.code}.label`) }}
             </span>
-            <span class="status-note">{{ updatedText }}</span>
+            <span class="status-note">
+              <span v-if="refreshing" class="inline-spinner" />
+              {{ updatedText }}
+            </span>
+            <button type="button" class="hero-refresh" :disabled="refreshing" @click="refreshNow">
+              <RefreshIcon />
+              <span>{{ $t('common.refresh') }}</span>
+            </button>
           </div>
+        </section>
+
+        <!-- A failed background refresh keeps the whole page on screen and says so. -->
+        <section v-if="retrying" class="notice-card retry-card">
+          <strong>{{ $t('refresh.retryTitle') }}</strong>
+          <p>{{ $t('refresh.retryNotice') }}</p>
+          <span>{{ errorText }}</span>
+          <button type="button" class="ghost-btn" :disabled="refreshing" @click="refreshNow">
+            {{ $t('refresh.now') }}
+          </button>
         </section>
 
         <TelegramProxyCard v-if="telegramProxy" :proxy="telegramProxy" />
 
         <UserStateCard v-if="info.blocked" state="blocked" :title="stateTitle" :text="stateBody" />
-        <template v-else>
-          <section class="summary-grid" :aria-label="$t('dashboard.summary')">
-            <article class="summary-card primary-card">
-              <span class="card-kicker">{{ $t('traffic.title') }}</span>
-              <strong>{{ trafficUsed }}</strong>
-              <span>{{ trafficLimitText }}</span>
-              <div class="meter" :aria-label="trafficLimitText">
-                <span :style="{ width: `${trafficPercent}%` }" />
-              </div>
-            </article>
+        <section v-else-if="!isActive" class="notice-card">
+          <strong>{{ $t(`statuses.${info.status.code}.label`) }}</strong>
+          <p>{{ $t(`statuses.${info.status.code}.text`) }}</p>
+          <span>{{ $t('support.placeholder') }}</span>
+        </section>
 
-            <article class="summary-card">
-              <span class="card-kicker">{{ $t('subscription.title') }}</span>
-              <strong>{{ subscriptionDate }}</strong>
-              <span>{{ subscriptionText }}</span>
-            </article>
+        <section class="summary-grid" :aria-label="$t('dashboard.summary')">
+          <article class="summary-card primary-card">
+            <span class="card-kicker">{{ $t('traffic.title') }}</span>
+            <strong>{{ trafficUsed }}</strong>
+            <span>{{ trafficLimitText }}</span>
+            <div class="meter" :aria-label="trafficLimitText">
+              <span :style="{ width: `${trafficPercent}%` }" />
+            </div>
+          </article>
 
-            <article class="summary-card">
-              <span class="card-kicker">{{ $t('connection.title') }}</span>
-              <strong>{{ readyNodes }}/{{ info.nodes.length }}</strong>
-              <span>{{ connectionHint }}</span>
-            </article>
-          </section>
+          <article class="summary-card">
+            <span class="card-kicker">{{ $t('subscription.title') }}</span>
+            <strong>{{ subscriptionDate }}</strong>
+            <span>{{ subscriptionText }}</span>
+          </article>
 
-          <section v-if="warningText" class="notice-card">
-            <strong>{{ $t('warnings.title') }}</strong>
-            <p>{{ warningText }}</p>
+          <article class="summary-card">
+            <span class="card-kicker">{{ $t('connection.title') }}</span>
+            <strong>{{ nodeSummary.ready }}/{{ nodeSummary.total }}</strong>
+            <span>{{ connectionHint }}</span>
+          </article>
+        </section>
+
+        <section v-if="warningText" class="notice-card">
+          <strong>{{ $t('warnings.title') }}</strong>
+          <p>{{ warningText }}</p>
+          <span>{{ $t('support.placeholder') }}</span>
+        </section>
+
+        <section class="devices-section" :aria-label="$t('devices.title')">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">{{ $t('devices.eyebrow') }}</p>
+              <h2>{{ $t('devices.title') }}</h2>
+              <p class="section-sub">{{ $t('devices.subtitle') }}</p>
+            </div>
+            <div class="devices-actions">
+              <span class="device-count">{{ deviceCountText }}</span>
+              <button
+                v-if="devices.length && !showAddForm"
+                type="button"
+                class="add-open"
+                :disabled="!canAdd"
+                @click="showAddForm = true"
+              >
+                <PlusIcon />
+                <span>{{ $t('devices.add') }}</span>
+              </button>
+            </div>
+          </div>
+
+          <div v-if="devices.length > 1" class="device-tabs" role="tablist">
+            <button
+              v-for="device in devices"
+              :key="device.id"
+              type="button"
+              role="tab"
+              :aria-selected="selectedDevice?.id === device.id"
+              :class="['device-tab', selectedDevice?.id === device.id && 'active']"
+              @click="activeDeviceId = device.id"
+            >
+              {{ device.name }}
+            </button>
+          </div>
+
+          <!-- An inactive owner sees the devices the account actually holds, with the inactive note
+               and an enabled Delete button; the empty state below only ever means "no devices". -->
+          <div v-if="deviceSection === 'inactive'" class="notice-card empty-devices">
+            <LaptopIcon />
+            <strong>{{ $t('devices.inactiveEmptyTitle') }}</strong>
+            <p>{{ $t('devices.inactiveEmptyText') }}</p>
             <span>{{ $t('support.placeholder') }}</span>
-          </section>
+          </div>
 
-          <section class="guide-grid">
-            <article class="guide-card platform-card">
-              <div class="section-head compact-head">
-                <div>
-                  <h2>{{ $t('platforms.title') }}</h2>
-                  <p>{{ $t('platforms.subtitle') }}</p>
-                </div>
-              </div>
+          <!-- A brand new account: invite a named device instead of the old "no servers" placeholder. -->
+          <div v-else-if="deviceSection === 'invite'" class="empty-devices">
+            <LaptopIcon />
+            <h3>{{ $t('devices.emptyTitle') }}</h3>
+            <p>{{ $t('devices.emptyText') }}</p>
+            <AddDeviceForm
+              :busy="adding"
+              :disabled="!canAdd"
+              :error-key="addErrorKey"
+              :reset-token="formResetToken"
+              @submit="submitAdd"
+            />
+          </div>
 
-              <div class="platform-tabs" role="tablist" :aria-label="$t('platforms.choose')">
-                <button
-                  v-for="platform in platforms"
-                  :key="platform.id"
-                  type="button"
-                  role="tab"
-                  :aria-selected="selectedPlatformId === platform.id"
-                  :class="['platform-tab', selectedPlatformId === platform.id && 'active']"
-                  @click="selectedPlatformId = platform.id"
-                >
-                  {{ $t(`platforms.items.${platform.id}.name`) }}
-                </button>
-              </div>
-
-              <div class="platform-tabs" role="tablist" :aria-label="$t('platforms.chooseApp')">
-                <button
-                  v-for="app in apps"
-                  :key="app"
-                  type="button"
-                  role="tab"
-                  :aria-selected="activeTab === app"
-                  :class="['platform-tab', activeTab === app && 'active']"
-                  @click="activeTab = app"
-                >
-                  {{ $t(`platforms.apps.${app}.name`) }}
-                </button>
-              </div>
-
-              <div class="platform-details">
-                <div class="download-panel">
-                  <div>
-                    <span class="card-kicker">{{ $t('platforms.downloadApp') }}</span>
-                    <h3>
-                      {{ $t(`platforms.apps.${activeTab}.name`) }} ·
-                      {{ $t(`platforms.items.${activePlatform.id}.name`) }}
-                    </h3>
-                    <p>{{ $t(`platforms.apps.${activeTab}.downloadHint`) }}</p>
-                  </div>
-                  <a
-                    class="download-link"
-                    :href="activeDownloadUrl"
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    <DownloadIcon />
-                    {{ $t('platforms.openDownload') }}
-                  </a>
-                </div>
-
-                <div class="app-qr-card">
-                  <img
-                    :src="downloadQrUrl"
-                    :alt="
-                      $t('platforms.qrAlt', {
-                        app: $t(`platforms.apps.${activeTab}.name`),
-                        platform: $t(`platforms.items.${activePlatform.id}.name`),
-                      })
-                    "
-                    width="168"
-                    height="168"
-                  />
-                  <span>{{ $t('platforms.scanToDownload') }}</span>
-                </div>
-
-                <div class="instruction-panel">
-                  <span class="card-kicker">{{ $t('platforms.addConfig') }}</span>
-                  <ol class="platform-list">
-                    <li>{{ $t('platforms.configStep1') }}</li>
-                    <li>{{ $t(`platforms.apps.${activeTab}.configStep`) }}</li>
-                    <li>{{ $t(`platforms.items.${activePlatform.id}.configStep`) }}</li>
-                  </ol>
-                </div>
-              </div>
-            </article>
-
-            <article class="guide-card">
-              <h2>{{ $t('help.title') }}</h2>
-              <p>{{ $t('help.text') }}</p>
-            </article>
-          </section>
-
-          <section class="connection-section">
-            <div class="section-head">
-              <div>
-                <p class="eyebrow">{{ $t('dashboard.eyebrow') }}</p>
-                <h2>{{ $t('connection.setupTitle') }}</h2>
-              </div>
-              <span class="selected-app-pill">
-                {{ $t(`platforms.apps.${activeTab}.name`) }} ·
-                {{ $t(`platforms.items.${activePlatform.id}.name`) }}
-              </span>
+          <template v-else>
+            <div v-if="showAddForm" class="add-panel">
+              <AddDeviceForm
+                :busy="adding"
+                :disabled="!canAdd"
+                :error-key="addErrorKey"
+                :reset-token="formResetToken"
+                @submit="submitAdd"
+              />
+              <button type="button" class="ghost-btn" @click="closeAddForm">
+                {{ $t('common.cancel') }}
+              </button>
             </div>
 
-            <UserStateCard v-if="!info.nodes.length" state="empty" />
-            <Transition v-else name="tab-fade" mode="out-in">
-              <div :key="activeTab" class="grid">
-                <ConfigCard
-                  v-for="node in info.nodes"
-                  :key="node.id"
-                  :tab="activeTab"
-                  :node="node"
-                  :user-id="userId"
-                  :active-qr-key="activeQrKey"
-                  :qr-item="activeTab === 'vpn' ? qrMap[node.id] : defaultQrItem"
-                  @toggle-qr="toggleQr"
-                  @copy="copy"
-                />
+            <p v-if="limitNote" class="limit-note">{{ limitNote }}</p>
+            <p v-if="deleteErrorKey" class="limit-note danger">{{ $t(deleteErrorKey) }}</p>
+
+            <div class="device-list">
+              <DeviceCard
+                v-if="selectedDevice"
+                :key="selectedDevice.id"
+                :token="userId"
+                :device="selectedDevice"
+                :tab="activeTab"
+                :active-qr-key="effectiveActiveQrKey"
+                :qr-items="qrMap"
+                :inactive="!isActive"
+                :deleting="deletingId === selectedDevice.id"
+                :confirming="confirmingDeleteId === selectedDevice.id"
+                @toggle-qr="toggleQr"
+                @copy="copy"
+                @request-delete="requestDelete"
+                @cancel-delete="cancelDelete"
+                @confirm-delete="confirmDelete"
+              />
+            </div>
+          </template>
+        </section>
+
+        <section class="guide-grid">
+          <article class="guide-card platform-card">
+            <div class="section-head compact-head">
+              <div>
+                <h2>{{ $t('platforms.title') }}</h2>
+                <p>{{ $t('platforms.subtitle') }}</p>
               </div>
-            </Transition>
-          </section>
-        </template>
+            </div>
+
+            <div class="platform-tabs" role="tablist" :aria-label="$t('platforms.choose')">
+              <button
+                v-for="platform in platforms"
+                :key="platform.id"
+                type="button"
+                role="tab"
+                :aria-selected="selectedPlatformId === platform.id"
+                :class="['platform-tab', selectedPlatformId === platform.id && 'active']"
+                @click="selectedPlatformId = platform.id"
+              >
+                {{ $t(`platforms.items.${platform.id}.name`) }}
+              </button>
+            </div>
+
+            <div class="platform-tabs" role="tablist" :aria-label="$t('platforms.chooseApp')">
+              <button
+                v-for="app in apps"
+                :key="app"
+                type="button"
+                role="tab"
+                :aria-selected="activeTab === app"
+                :class="['platform-tab', activeTab === app && 'active']"
+                @click="activeTab = app"
+              >
+                {{ $t(`platforms.apps.${app}.name`) }}
+              </button>
+            </div>
+
+            <div class="platform-details">
+              <div class="download-panel">
+                <div>
+                  <span class="card-kicker">{{ $t('platforms.downloadApp') }}</span>
+                  <h3>
+                    {{ $t(`platforms.apps.${activeTab}.name`) }} ·
+                    {{ $t(`platforms.items.${activePlatform.id}.name`) }}
+                  </h3>
+                  <p>{{ $t(`platforms.apps.${activeTab}.downloadHint`) }}</p>
+                </div>
+                <a class="download-link" :href="activeDownloadUrl" target="_blank" rel="noreferrer">
+                  <DownloadIcon />
+                  {{ $t('platforms.openDownload') }}
+                </a>
+              </div>
+
+              <div class="app-qr-card">
+                <img
+                  :src="downloadQrUrl"
+                  :alt="
+                    $t('platforms.qrAlt', {
+                      app: $t(`platforms.apps.${activeTab}.name`),
+                      platform: $t(`platforms.items.${activePlatform.id}.name`),
+                    })
+                  "
+                  width="168"
+                  height="168"
+                />
+                <span>{{ $t('platforms.scanToDownload') }}</span>
+              </div>
+
+              <div class="instruction-panel">
+                <span class="card-kicker">{{ $t('platforms.addConfig') }}</span>
+                <ol class="platform-list">
+                  <li>{{ $t('platforms.configStep1') }}</li>
+                  <li>{{ $t(`platforms.apps.${activeTab}.configStep`) }}</li>
+                  <li>{{ $t(`platforms.items.${activePlatform.id}.configStep`) }}</li>
+                </ol>
+              </div>
+            </div>
+          </article>
+
+          <article class="guide-card">
+            <h2>{{ $t('help.title') }}</h2>
+            <p>{{ $t('help.text') }}</p>
+          </article>
+        </section>
       </template>
     </main>
   </div>
@@ -183,13 +272,27 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
-import { fetchUserInfo, type TelegramProxyInfo, type UserInfo, type UserNode } from './api/userPage'
-import ConfigCard from './components/ConfigCard.vue'
-import UserHeader from './components/UserHeader.vue'
+
+import {
+  PublicApiError,
+  apiErrorKey,
+  createDevice,
+  deleteDevice,
+  type TelegramProxyInfo,
+  type UserDevice,
+  type UserNode,
+} from './api/userPage'
+import AddDeviceForm from './components/AddDeviceForm.vue'
+import DeviceCard from './components/DeviceCard.vue'
 import TelegramProxyCard from './components/TelegramProxyCard.vue'
+import UserHeader from './components/UserHeader.vue'
 import UserStateCard from './components/UserStateCard.vue'
+import { useUserPageRefresh } from './composables/useUserPageRefresh'
 import { useVpnQrChunks } from './composables/useVpnQrChunks'
-import { DownloadIcon } from './icons'
+import { DownloadIcon, PlusIcon, RefreshIcon } from './icons'
+import { parseDeviceCardQrKey } from './utils/deviceUrls'
+import { deviceSectionState } from './utils/deviceListState'
+import { selectedDeviceId as resolveSelectedDeviceId } from './utils/deviceSelection'
 import { copyToClipboard, fmtBytes, fmtDate, fmtDateTime } from './utils/format'
 
 type PlatformId = 'ios' | 'android' | 'macos' | 'windows' | 'linux'
@@ -202,15 +305,20 @@ interface PlatformOption {
 
 const { t, locale } = useI18n()
 const route = useRoute()
-const userId = route.params.userId as string
+const userId = computed(() => String(route.params.userId ?? ''))
 
-const loading = ref(true)
-const error = ref<number | null>(null)
-const info = ref<UserInfo | null>(null)
-const activeTab = ref<'awg' | 'vpn'>('vpn')
+const activeTab = ref<AppId>('vpn')
 const activeQrKey = ref<string | null>(null)
 const selectedPlatformId = ref<PlatformId>('ios')
 const apps: AppId[] = ['vpn', 'awg']
+
+const showAddForm = ref(false)
+const adding = ref(false)
+const addErrorKey = ref<string | null>(null)
+const formResetToken = ref(0)
+const confirmingDeleteId = ref<string | null>(null)
+const deletingId = ref<string | null>(null)
+const deleteErrorKey = ref<string | null>(null)
 
 const platforms: PlatformOption[] = [
   {
@@ -250,21 +358,95 @@ const platforms: PlatformOption[] = [
   },
 ]
 
-const { qrMap, setInfo, fetchAllVpnChunks } = useVpnQrChunks(userId)
+const {
+  qrMap,
+  syncDevices,
+  fetchAllVpnChunks,
+  forgetDevice,
+  reset: resetQr,
+} = useVpnQrChunks(() => userId.value)
 
-const defaultQrItem = {
-  hasChunks: false,
-  hasError: false,
-  chunks: [] as string[],
-  idx: 0,
-  chunkCount: 0,
-}
+const {
+  info,
+  error,
+  retrying,
+  loading,
+  refreshing,
+  refresh,
+  acceptInfo,
+  invalidate,
+  reset,
+  start,
+} = useUserPageRefresh(() => userId.value, {
+  // A revoked link must not leave a cached configuration on screen: the page drops its QR caches
+  // here, and the authoritative re-read that follows surfaces the invalid link.
+  onUnauthorized: () => {
+    resetQr()
+    activeQrKey.value = null
+  },
+})
 
-const readyNodes = computed(() => info.value?.nodes.filter((node) => node.ready).length || 0)
+const devices = computed<UserDevice[]>(() => info.value?.devices ?? [])
+const activeDeviceId = ref<string | null>(null)
+const selectedDevice = computed(
+  () => devices.value.find((device) => device.id === activeDeviceId.value) ?? null,
+)
+
+/** An account may only add and download while it is active and not blocked. */
+const isActive = computed(
+  () => !!info.value && info.value.status.code === 'active' && !info.value.blocked,
+)
+
+/** The backend decides: its effective limit, block and lifecycle state are already folded in. */
+const canAdd = computed(() => !!info.value?.can_add_device && isActive.value)
+
+/**
+ * The device section is never told that a list of the owner's own devices is hidden: an inactive
+ * account still sees its devices (with the inactive note and Delete), and the empty state is only
+ * used when the account truly owns none.
+ */
+const deviceSection = computed(() =>
+  deviceSectionState({ hasDevices: devices.value.length > 0, inactive: !isActive.value }),
+)
+
+const deviceCount = computed(() => info.value?.device_count ?? devices.value.length)
+const deviceLimit = computed(() => info.value?.device_limit ?? 0)
+
+const deviceCountText = computed(() =>
+  deviceLimit.value > 0
+    ? t('devices.countOf', { count: deviceCount.value, limit: deviceLimit.value })
+    : t('devices.countUnlimited', { count: deviceCount.value }),
+)
+
+const limitNote = computed(() => {
+  if (!info.value) return ''
+  if (!isActive.value) return t('devices.inactiveNote')
+  if (deviceLimit.value > 0 && deviceCount.value >= deviceLimit.value) {
+    return t('devices.limitNote', { limit: deviceLimit.value })
+  }
+  return ''
+})
+
 const telegramProxy = computed<TelegramProxyInfo | null>(() => {
   const proxy = info.value?.telegram_proxy
   return proxy && proxy.enabled ? proxy : null
 })
+
+/** Nodes the account can use, counted once even when several devices share a node. */
+const nodeSummary = computed(() => {
+  const seen = new Map<string, boolean>()
+  for (const device of devices.value) {
+    for (const node of device.nodes) seen.set(node.id, Boolean(seen.get(node.id)) || node.ready)
+  }
+  if (!seen.size) {
+    for (const node of info.value?.nodes ?? []) seen.set(node.id, node.ready)
+  }
+  return {
+    total: seen.size,
+    ready: [...seen.values()].filter(Boolean).length,
+  }
+})
+
 const trafficUsed = computed(() => fmtBytes(info.value?.traffic.used_bytes || 0))
 const trafficPercent = computed(() => {
   const traffic = info.value?.traffic
@@ -298,16 +480,12 @@ const statusText = computed(() => {
   const code = info.value?.status.code || 'active'
   return t(`statuses.${code}.text`)
 })
-const stateTitle = computed(() => {
-  const code = info.value?.status.code || 'blocked'
-  return t(`statuses.${code}.label`)
-})
-const stateBody = computed(() => {
-  const code = info.value?.status.code || 'blocked'
-  return `${t(`statuses.${code}.text`)} ${t('support.placeholder')}`
-})
+const stateTitle = computed(() => t(`statuses.${info.value?.status.code || 'blocked'}.label`))
+const stateBody = computed(
+  () => `${t(`statuses.${info.value?.status.code || 'blocked'}.text`)} ${t('support.placeholder')}`,
+)
 const connectionHint = computed(() =>
-  readyNodes.value > 0 ? t('connection.readyHint') : t('connection.pendingHint'),
+  nodeSummary.value.ready > 0 ? t('connection.readyHint') : t('connection.pendingHint'),
 )
 const activePlatform = computed(
   () => platforms.find((platform) => platform.id === selectedPlatformId.value) || platforms[0],
@@ -319,6 +497,21 @@ const downloadQrUrl = computed(
       activeDownloadUrl.value,
     )}`,
 )
+
+/** Translated description of the last failure; the raw server text is never rendered. */
+const errorText = computed(() =>
+  error.value ? t(apiErrorKey(error.value.kind)) : t('errors.generic'),
+)
+
+/** An open QR is dropped as soon as its device/node leaves the page. */
+const effectiveActiveQrKey = computed(() => {
+  const key = activeQrKey.value
+  if (!key) return null
+  const parsed = parseDeviceCardQrKey(key)
+  if (!parsed) return null
+  const device = devices.value.find((entry) => entry.id === parsed.deviceId)
+  return device?.nodes.some((node) => node.id === parsed.nodeId) ? key : null
+})
 
 const warningText = computed(() => {
   if (!info.value || info.value.status.code !== 'active') return ''
@@ -347,38 +540,139 @@ function detectPlatform(): PlatformId {
   return 'ios'
 }
 
-watch(activeTab, (tab) => {
-  activeQrKey.value = null
-  if (tab === 'vpn' && info.value) fetchAllVpnChunks()
-})
-
-function toggleQr(key: string) {
+function toggleQr(key: string): void {
   activeQrKey.value = activeQrKey.value === key ? null : key
 }
 
-onMounted(async () => {
-  selectedPlatformId.value = detectPlatform()
-  try {
-    const data = await fetchUserInfo(userId)
-    info.value = data
-    setInfo(data)
-    fetchAllVpnChunks()
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : ''
-    error.value = msg === '404' ? 404 : msg ? Number(msg) || 0 : 0
-  } finally {
-    loading.value = false
-  }
-})
+function closeAddForm(): void {
+  showAddForm.value = false
+  addErrorKey.value = null
+}
 
-async function copy(node: UserNode) {
+function errorKeyFor(failure: unknown): string {
+  const kind = failure instanceof PublicApiError ? failure.kind : 'unknown'
+  // A full device limit is the one conflict worth naming: the other answers have their own text.
+  return kind === 'conflict' ? 'devices.errors.limit' : apiErrorKey(kind)
+}
+
+function canAddFromCount(count: number): boolean {
+  if (!isActive.value) return false
+  return deviceLimit.value === 0 || count < deviceLimit.value
+}
+
+async function submitAdd(name: string): Promise<void> {
+  if (adding.value || !canAdd.value) return
+  adding.value = true
+  addErrorKey.value = null
+  // Whatever was requested before this write must not overwrite its result.
+  invalidate()
+  try {
+    const device = await createDevice(userId.value, name)
+    const current = info.value
+    if (current) {
+      const nextCount = current.device_count + 1
+      acceptInfo({
+        ...current,
+        devices: [...current.devices, device],
+        device_count: nextCount,
+        can_add_device: canAddFromCount(nextCount),
+      })
+    }
+    formResetToken.value += 1
+    showAddForm.value = false
+    await refresh({ silent: true })
+  } catch (failure) {
+    addErrorKey.value = errorKeyFor(failure)
+  } finally {
+    adding.value = false
+  }
+}
+
+function requestDelete(deviceId: string): void {
+  confirmingDeleteId.value = deviceId
+  deleteErrorKey.value = null
+}
+
+function cancelDelete(): void {
+  if (deletingId.value) return
+  confirmingDeleteId.value = null
+}
+
+async function confirmDelete(deviceId: string): Promise<void> {
+  if (deletingId.value) return
+  deletingId.value = deviceId
+  deleteErrorKey.value = null
+  invalidate()
+  try {
+    const result = await deleteDevice(userId.value, deviceId)
+    const current = info.value
+    if (current) {
+      // The slot is free as soon as the server accepted: show that before the reconcile lands.
+      acceptInfo({
+        ...current,
+        devices: current.devices.filter((device) => device.id !== deviceId),
+        device_count: result.device_count,
+        can_add_device: canAddFromCount(result.device_count),
+      })
+    }
+    // Close this device's configuration: cached QR codes and any open code go with it.
+    forgetDevice(deviceId)
+    const parsed = activeQrKey.value ? parseDeviceCardQrKey(activeQrKey.value) : null
+    if (parsed?.deviceId === deviceId) activeQrKey.value = null
+    confirmingDeleteId.value = null
+    await refresh({ silent: true })
+  } catch (failure) {
+    deleteErrorKey.value = errorKeyFor(failure)
+  } finally {
+    deletingId.value = null
+  }
+}
+
+async function copy(node: UserNode): Promise<void> {
   const text = node.vpn_uri || ''
+  if (!text) return
   await copyToClipboard(text)
   node.copied = true
+  const target = node
   setTimeout(() => {
-    node.copied = false
+    target.copied = false
   }, 2200)
 }
+
+function refreshNow(): void {
+  void refresh()
+}
+
+watch(activeTab, (tab) => {
+  activeQrKey.value = null
+  if (tab === 'vpn' && isActive.value) fetchAllVpnChunks(devices.value)
+})
+
+watch(
+  () => info.value?.devices,
+  (next) => {
+    if (!next) return
+    activeDeviceId.value = resolveSelectedDeviceId(next, activeDeviceId.value)
+    syncDevices(next)
+    if (isActive.value && activeTab.value === 'vpn') fetchAllVpnChunks(next)
+  },
+)
+
+// The router reuses this component when only the token changes: nothing from the old page may stay.
+watch(userId, async (next, previous) => {
+  if (!next || next === previous) return
+  resetQr()
+  activeQrKey.value = null
+  confirmingDeleteId.value = null
+  deleteErrorKey.value = null
+  showAddForm.value = false
+  await reset()
+})
+
+onMounted(() => {
+  selectedPlatformId.value = detectPlatform()
+  start()
+})
 </script>
 
 <style>
@@ -428,7 +722,30 @@ body {
   gap: 0.35rem;
 }
 
+.retry-card {
+  border-color: color-mix(in srgb, var(--danger) 40%, var(--border));
+  background: var(--danger-bg);
+}
+
+.retry-card p {
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.retry-card span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.retry-card button {
+  justify-self: start;
+  margin-top: 4px;
+}
+
 main {
+  display: flex;
+  flex-direction: column;
   max-width: 1180px;
   margin: 0 auto;
   padding: 28px 16px 72px;
@@ -507,8 +824,50 @@ main {
 }
 
 .status-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   color: var(--muted);
   font-size: 13px;
+}
+
+.hero-refresh {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 13px;
+  border: 1.5px solid var(--border);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.hero-refresh svg {
+  width: 13px;
+  height: 13px;
+}
+
+.hero-refresh:hover:not(:disabled) {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.hero-refresh:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.inline-spinner {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  border-top-color: var(--primary);
+  animation: spin 0.7s linear infinite;
 }
 
 .summary-grid,
@@ -517,6 +876,10 @@ main {
   grid-template-columns: 1fr;
   gap: 14px;
   margin-bottom: 20px;
+}
+
+.guide-grid {
+  order: 1;
 }
 
 .summary-card,
@@ -684,7 +1047,9 @@ main {
   font-weight: 800;
 }
 
-.connection-section {
+.devices-section {
+  order: 2;
+  margin-bottom: 20px;
   padding: 20px;
   border: 1px solid var(--border);
   border-radius: calc(var(--radius) + 6px);
@@ -697,73 +1062,174 @@ main {
   margin-bottom: 18px;
 }
 
-.tabs {
-  display: flex;
-  gap: 8px;
-  overflow-x: auto;
-}
-
-.tab-btn {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 42px;
-  padding: 8px 18px;
-  border-radius: 999px;
-  border: 1.5px solid var(--border);
-  background: var(--card);
+.section-sub {
+  margin-top: 6px;
   color: var(--muted);
   font-size: 14px;
-  font-weight: 700;
-  cursor: pointer;
-  transition: all 0.15s;
+  line-height: 1.5;
 }
 
-.tab-btn svg {
-  width: 15px;
-  height: 15px;
+.devices-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
 }
 
-.tab-btn:hover,
-.tab-btn.active {
-  border-color: var(--primary);
-  color: var(--primary);
-}
-
-.tab-btn.active {
-  background: var(--primary-light);
-}
-
-.selected-app-pill {
+.device-count {
   display: inline-flex;
   align-items: center;
   min-height: 38px;
-  border-radius: 999px;
-  background: var(--primary-light);
-  color: var(--primary);
   padding: 0 14px;
+  border-radius: 999px;
+  background: var(--bg-soft);
+  color: var(--text);
   font-size: 13px;
   font-weight: 800;
 }
 
-.tab-fade-enter-active,
-.tab-fade-leave-active {
-  transition:
-    opacity 0.2s ease,
-    transform 0.2s ease;
+.add-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 38px;
+  padding: 0 16px;
+  border: none;
+  border-radius: 999px;
+  background: var(--primary);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
 }
 
-.tab-fade-enter-from,
-.tab-fade-leave-to {
-  opacity: 0;
-  transform: translateY(6px);
+.add-open svg {
+  width: 14px;
+  height: 14px;
 }
 
-.grid {
+.add-open:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.empty-devices {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 26px 22px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+  text-align: left;
+}
+
+.empty-devices svg {
+  width: 34px;
+  height: 34px;
+  color: var(--primary);
+}
+
+.empty-devices h3 {
+  font-size: 19px;
+  letter-spacing: -0.02em;
+}
+
+.empty-devices p,
+.empty-devices span {
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.empty-devices .add-form {
+  margin-top: 6px;
+  max-width: 620px;
+}
+
+.add-panel {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+}
+
+.add-panel .add-form {
+  max-width: 620px;
+}
+
+.limit-note {
+  margin-bottom: 12px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.limit-note.danger {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.device-list {
+  display: grid;
   gap: 16px;
-  align-items: start;
+}
+
+.device-tabs {
+  display: flex;
+  gap: 8px;
+  margin: 0 0 18px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.device-tab {
+  flex: 0 0 auto;
+  min-height: 38px;
+  max-width: 15rem;
+  overflow: hidden;
+  padding: 0 14px;
+  border: 1.5px solid var(--border);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.device-tab:hover,
+.device-tab.active {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.device-tab.active {
+  background: var(--primary-light);
+}
+
+.ghost-btn {
+  justify-self: start;
+  min-height: 38px;
+  padding: 0 16px;
+  border: 1.5px solid var(--border);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @media (min-width: 720px) {
@@ -805,7 +1271,7 @@ main {
 
 @media (max-width: 520px) {
   .hero,
-  .connection-section {
+  .devices-section {
     padding: 18px;
   }
 }

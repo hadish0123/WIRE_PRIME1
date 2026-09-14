@@ -1,6 +1,8 @@
 {
   "common": {
-    "notAvailable": "—"
+    "notAvailable": "—",
+    "cancel": "取消",
+    "refresh": "刷新"
   },
   "app": {
     "brand": "Amnezia"
@@ -161,6 +163,65 @@
     "copy": "复制",
     "downloadConf": "下载 .conf 文件",
     "downloadVpn": "下载 .vpn 文件",
-    "part": "部分"
+    "part": "部分",
+    "syncWarning": "该服务器上次同步报错。下方配置仍然可用，因此文件和二维码继续可以获取。",
+    "inactive": "配置不可用",
+    "inactiveHint": "当访问被关闭、已过期或流量超额时，下载和二维码将关闭。"
+  },
+  "devices": {
+    "eyebrow": "连接设备",
+    "title": "我的设备",
+    "subtitle": "每台设备都有自己的密钥，并在每个服务器上拥有独立配置。",
+    "countOf": "{count} / {limit}",
+    "countUnlimited": "{count} · 无限制",
+    "unlimited": "无限制",
+    "add": "添加设备",
+    "adding": "正在添加…",
+    "nameLabel": "设备名称",
+    "namePlaceholder": "例如：笔记本、手机、工作电脑",
+    "nameHint": "名称仅你自己可见，并会写入配置描述。最多 64 个字符。",
+    "nameErrors": {
+      "blank": "请输入设备名称。",
+      "too_long": "名称过长：最多 64 个字符。",
+      "control_chars": "名称不能包含控制字符。"
+    },
+    "emptyTitle": "添加你的第一台设备",
+    "emptyText": "为要连接的设备命名，例如笔记本或手机。服务器确认后配置会立即出现，通常只需几秒钟。",
+    "limitNote": "已达到设备上限 {limit}。删除一台设备即可释放名额。",
+    "inactiveNote": "在此账号状态下，你仍然可以查看和删除自己的设备，但无法添加设备或下载配置。",
+    "inactiveEmptyTitle": "账号上没有设备",
+    "inactiveEmptyText": "此账号目前没有可管理的设备。添加设备需要有效的访问权限：请恢复访问或联系管理员。",
+    "pendingNote": "服务器正在准备这台设备。配置会自动显示在这里。",
+    "syncWarning": "{count} 台服务器上次同步报错。已获取的配置继续可用。",
+    "noServers": "该设备暂时没有可用的服务器。",
+    "createdAt": "添加于 {value}",
+    "remove": "删除",
+    "deleting": "正在删除…",
+    "deleteConfirmTitle": "删除设备“{name}”？",
+    "deleteConfirmText": "它的密钥和配置会在所有服务器上立即吊销，设备名额也会马上释放。已计入的流量仍留在账号上。此操作无法撤销。",
+    "deleteConfirmAction": "删除并吊销",
+    "status": {
+      "ready": "就绪",
+      "pending": "准备中",
+      "error": "同步错误",
+      "deleting": "删除中"
+    },
+    "errors": {
+      "limit": "已达到设备上限。请删除一台设备，或请管理员提高上限。"
+    }
+  },
+  "refresh": {
+    "retryTitle": "刷新失败",
+    "retryNotice": "页面保留了已加载的数据，并会自动重试。",
+    "now": "立即重试"
+  },
+  "apiErrors": {
+    "not_found": "该链接已失效。请向管理员索取新的链接。",
+    "blocked": "该账号的访问已关闭，因此操作被拒绝。",
+    "conflict": "操作被拒绝：设备上限已达到。",
+    "validation": "请求被拒绝。请检查设备名称后重试。",
+    "network": "服务器没有响应。请检查网络连接。",
+    "server": "服务器无法完成请求。请稍后重试。",
+    "unknown": "出现问题。请稍后重试。"
   }
 }

@@ -11,9 +11,27 @@ os.environ['DATABASE_URL'] = 'sqlite+aiosqlite:///file::memory:?cache=shared'
 os.environ.setdefault('ADMIN_PASSWORD', 'testpass')
 os.environ.setdefault('SECRET_KEY', 'test-secret-for-tests-only')
 
-from app.database import Base, get_db
+from app.database import Base, get_db, get_session_factory
 from app.main import app
-from app.models import Node, Peer, User
+from app.models import Device, Node, Peer, User
+
+
+def make_device(user: User, *, name: str = 'Default', is_legacy_default: bool = False) -> Device:
+    """Explicit device fixture that reproduces what migration 0019 creates.
+
+    The device inherits the owner's retained per-user credentials, exactly like a migration-era
+    ``Default`` device; give the user its own keys/IP when the test needs usable key material.
+    """
+    return Device(
+        id=f'{user.id}-device-{name}',
+        user_id=user.id,
+        name=name,
+        public_key=user.public_key,
+        private_key=user.private_key,
+        vpn_ip=user.vpn_ip,
+        is_legacy_default=is_legacy_default,
+    )
+
 
 app.debug = False
 
@@ -48,6 +66,9 @@ async def db() -> AsyncGenerator[AsyncSession]:
 @pytest.fixture()
 async def client() -> AsyncGenerator[AsyncClient]:
     app.dependency_overrides[get_db] = override_get_db
+    # Code that opens its own short sessions - the public event stream - must reach the test
+    # database too, not the application's engine.
+    app.dependency_overrides[get_session_factory] = lambda: TestSessionLocal
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url='http://test') as ac:
         yield ac
@@ -98,14 +119,16 @@ async def seeded_worker_state(db: AsyncSession) -> tuple[Node, User, Peer]:
         private_key='alice-private',
         vpn_ip='10.8.0.2',
     )
+    device = make_device(user, name='Default', is_legacy_default=True)
     peer = Peer(
         id='peer-1',
         node_id=node.id,
         user_id=user.id,
+        device_id=device.id,
         status='pending',
         psk_key='peer-psk',
     )
-    db.add_all([node, user, peer])
+    db.add_all([node, user, device, peer])
     await db.commit()
     return node, user, peer
 

@@ -1,6 +1,6 @@
 import { useConfirm } from 'primevue/useconfirm'
 import { useToast } from 'primevue/usetoast'
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { nodesApi } from '../api/nodes'
 import type { Node, User } from '../api/types'
@@ -20,10 +20,6 @@ export function useUsers() {
   const newName = ref('')
   const addingUser = ref(false)
   const scenario = scenarioFromLocation()
-
-  const readyNodes = computed(() =>
-    allNodes.value.filter((n) => n.server_public_key && n.server_endpoint),
-  )
 
   async function load() {
     loading.value = true
@@ -72,6 +68,12 @@ export function useUsers() {
           online: false,
           peers: [],
           remnawave: null,
+          // A brand new account owns nothing: no devices, so no configurations to hand out yet. Its
+          // limit is the local default (0 = unlimited) until an operator changes it.
+          device_limit: 0,
+          effective_device_limit: 0,
+          device_count: 0,
+          devices: [],
           lifecycle: {
             source: 'local',
             status: 'active',
@@ -229,7 +231,6 @@ export function useUsers() {
     loading,
     newName,
     addingUser,
-    readyNodes,
     load,
     addUser,
     block,

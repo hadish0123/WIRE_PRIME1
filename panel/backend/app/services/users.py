@@ -2,11 +2,9 @@ import uuid
 from typing import Protocol
 
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.crypto import allocate_ip, generate_keypair, generate_psk
-from app.models import Node, Peer, User
+from app.models import Node, User
 
 
 class RemnawaveUserProvisionData(Protocol):
@@ -14,75 +12,23 @@ class RemnawaveUserProvisionData(Protocol):
     short_uuid: str | None
 
 
-async def allocate_vpn_ip(db: AsyncSession) -> str:
-    used_ips = {
-        ip
-        for ip in (await db.execute(select(User.vpn_ip).where(User.vpn_ip.isnot(None)))).scalars()
-        if ip
-    }
-    return allocate_ip(used_ips)
-
-
 async def list_nodes(db: AsyncSession) -> list[Node]:
     return list((await db.execute(select(Node))).scalars().all())
 
 
-async def _create_pending_peer(db: AsyncSession, *, node_id: str, user_id: str) -> bool:
-    existing_peer_id = await db.scalar(
-        select(Peer.id).where(Peer.node_id == node_id, Peer.user_id == user_id)
-    )
-    if existing_peer_id is not None:
-        return False
+async def create_local_user(
+    db: AsyncSession, name: str, *, is_blocked: bool = False, device_limit: int = 0
+) -> User:
+    """Create a local account with no key material, devices or peers.
 
-    try:
-        async with db.begin_nested():
-            db.add(Peer(node_id=node_id, user_id=user_id, status='pending', psk_key=generate_psk()))
-            await db.flush()
-    except IntegrityError:
-        return False
-    return True
-
-
-async def create_pending_peers_for_user(db: AsyncSession, user: User) -> set[str]:
-    node_ids: set[str] = set()
-    nodes = await list_nodes(db)
-    for node in nodes:
-        created = await _create_pending_peer(db, node_id=node.id, user_id=user.id)
-        if created:
-            node_ids.add(node.id)
-    return node_ids
-
-
-async def create_pending_peers_for_node(db: AsyncSession, node: Node) -> set[str]:
-    users = (
-        (
-            await db.execute(
-                select(User).where(User.is_blocked == False, User.public_key.isnot(None))  # noqa: E712
-            )
-        )
-        .scalars()
-        .all()
-    )
-    user_ids: set[str] = set()
-    for user in users:
-        created = await _create_pending_peer(db, node_id=node.id, user_id=user.id)
-        if created:
-            user_ids.add(user.id)
-    return user_ids
-
-
-async def create_local_user(db: AsyncSession, name: str, *, is_blocked: bool = False) -> User:
-    private_key, public_key = generate_keypair()
-    user = User(
-        name=name,
-        public_key=public_key,
-        private_key=private_key,
-        vpn_ip=await allocate_vpn_ip(db),
-        is_blocked=is_blocked,
-    )
+    Devices are created explicitly (see ``app.services.devices``); provisioning must never invent
+    them, so a brand new account owns nothing until an operator or the user adds a device. The
+    optional ``device_limit`` is the account's local budget only - it never creates a device, and it
+    is inert for a Remnawave-managed account.
+    """
+    user = User(name=name, is_blocked=is_blocked, device_limit=device_limit)
     db.add(user)
     await db.flush()
-    await create_pending_peers_for_user(db, user)
     return user
 
 
@@ -100,15 +46,14 @@ async def create_remnawave_local_user(
     *,
     is_blocked: bool,
 ) -> tuple[User, set[str]]:
-    private_key, public_key = generate_keypair()
+    """Create the local mirror of a Remnawave profile with no keys, devices or peers.
+
+    The empty node-id set is returned so callers keep their "affected nodes" contract.
+    """
     user = User(
         name=await resolve_remnawave_username(db, data.username, data.short_uuid),
-        public_key=public_key,
-        private_key=private_key,
-        vpn_ip=await allocate_vpn_ip(db),
         is_blocked=is_blocked,
     )
     db.add(user)
     await db.flush()
-    node_ids = await create_pending_peers_for_user(db, user)
-    return user, node_ids
+    return user, set()

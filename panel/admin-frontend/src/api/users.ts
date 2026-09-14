@@ -1,5 +1,6 @@
 import { req } from './client'
 import type {
+  AdminUserDevices,
   LocalUserLifecycleUpdate,
   RegeneratedPublicLink,
   User,
@@ -7,6 +8,7 @@ import type {
   UserListQuery,
   UserListResponse,
 } from './types'
+import { userDeviceLimitPath, userDevicesPath } from '../utils/deviceConfigUrls'
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
@@ -59,7 +61,10 @@ function userSearchText(user: User): string {
     user.remnawave?.tag,
     user.remnawave?.sync_reason,
     user.remnawave?.sync_error,
-    ...user.peers.map((peer) => `${peer.node_name} ${peer.endpoint ?? ''} ${peer.status}`),
+    ...user.devices.flatMap((device) => [device.name, device.vpn_ip ?? '']),
+    ...user.peers.map(
+      (peer) => `${peer.device_name ?? ''} ${peer.node_name} ${peer.endpoint ?? ''} ${peer.status}`,
+    ),
   ]
     .filter(Boolean)
     .join(' ')
@@ -128,6 +133,11 @@ export const usersApi = {
   },
   queryLocalUsers: applyUserQuery,
   addUser: (name: string) => req<User>('POST', '/users', { name }),
+  getUserDevices: (id: string) => req<AdminUserDevices>('GET', userDevicesPath(id)),
+  // Only a local account's limit is written here; a Remnawave-managed owner is refused by the
+  // backend (409) because its limit is imported from Remnawave.
+  updateDeviceLimit: (id: string, deviceLimit: number) =>
+    req<AdminUserDevices>('PUT', userDeviceLimitPath(id), { device_limit: deviceLimit }),
   blockUser: (id: string) => req<User>('PUT', `/users/${id}/block`),
   unblockUser: (id: string) => req<User>('PUT', `/users/${id}/unblock`),
   updateLifecycle: (id: string, data: LocalUserLifecycleUpdate) =>

@@ -7,6 +7,8 @@ from sqlalchemy import select
 from app.models import AsyncOperation, Node
 from app.routers.internal_worker_parts.common import DB
 from app.schemas.worker import HeartbeatResult, ProvisionResult, SyncResult
+from app.services.devices import release_device_ips
+from app.services.events import REASON_NODE_HEARTBEAT, REASON_NODE_SYNC, notify_user_changes
 from app.services.local_lifecycle import enforce_local_lifecycle_for_user
 from app.services.node_config import node_snapshot
 from app.services.node_sync import apply_interface_result, apply_peer_result, load_node_with_peers
@@ -30,15 +32,26 @@ async def _apply_peer_results(
     peers: list[Any],
     peer_results: list[Any],
     sampled_at: datetime,
-) -> None:
-    peers_by_public_key = {peer.user.public_key: peer for peer in peers if peer.user.public_key}
+) -> set[str]:
+    """Apply a node's peer results and return the owners whose peers this result acknowledged.
+
+    The returned ids are the owners a caller must notify: a result that acknowledged *any* peer is
+    an acknowledgement for that owner, partial or not - the page's readiness is per device and per
+    node, so there is no global "all nodes done" event to wait for.
+    """
+    # Peers are keyed by their device's public key: one owner may have several devices on the node.
+    peers_by_public_key = {
+        peer.device.public_key: peer for peer in peers if peer.device and peer.device.public_key
+    }
     limited_node_ids: set[str] = set()
     local_lifecycle_node_ids: set[str] = set()
     remote_disable_uuids: set[str] = set()
+    acknowledged_owner_ids: set[str] = set()
     for peer_result in peer_results:
         peer = peers_by_public_key.get(peer_result.public_key)
         if not peer:
             continue
+        acknowledged_owner_ids.add(peer.user_id)
         sample = await apply_peer_result(db, peer, peer_result, sampled_at)
         if sample is not None:
             local_lifecycle_node_ids.update(
@@ -50,6 +63,7 @@ async def _apply_peer_results(
     await enqueue_sync_nodes(db, local_lifecycle_node_ids)
     await enqueue_sync_nodes(db, limited_node_ids)
     await enqueue_remnawave_disable_users(db, remote_disable_uuids)
+    return acknowledged_owner_ids
 
 
 def _aware(value: datetime) -> datetime:
@@ -195,11 +209,16 @@ async def node_provision_recovery(
 
 @router.post('/nodes/{node_id}/sync-result')
 async def node_sync_result(node_id: str, data: SyncResult, db: DB):
-    node, peers = await load_node_with_peers(db, node_id)
+    node, peers = await load_node_with_peers(db, node_id, for_update=True)
     if not data.ok:
         node.sync_status = 'failed'
         node.sync_error = data.error or 'Worker sync failed'
         node.last_error = node.sync_error
+        # A failed sync changes what the page renders: every node on it now reports ``error`` while
+        # an already-acknowledged config stays downloadable (``peer_available`` ignores the node's
+        # diagnostic state). The owners holding a peer on this node must re-read that, in the same
+        # transaction as the status write. Only ids and the reason travel - never the error text.
+        await notify_user_changes(db, {peer.user_id for peer in peers}, reason=REASON_NODE_SYNC)
         await db.commit()
         return {'status': 'failed'}
     synced_at = utc_now()
@@ -213,11 +232,24 @@ async def node_sync_result(node_id: str, data: SyncResult, db: DB):
     seen_public_keys: set[str] = set()
     for peer_result in data.peers:
         seen_public_keys.add(peer_result.public_key)
-    await _apply_peer_results(db, peers, data.peers, sampled_at)
+    acknowledged_owner_ids = await _apply_peer_results(db, peers, data.peers, sampled_at)
+    released_candidates: set[str] = set()
     for peer in peers:
-        if peer.status == 'pending_delete' and peer.user.public_key not in seen_public_keys:
+        device_public_key = peer.device.public_key if peer.device else None
+        if peer.status == 'pending_delete' and device_public_key not in seen_public_keys:
             peer.status = 'deleted'
+            acknowledged_owner_ids.add(peer.user_id)
+        if peer.status == 'deleted':
+            released_candidates.add(peer.device_id)
+    # A device whose every peer is now confirmed gone has nothing left on any node, so its address
+    # goes back to the finite pool. Bounded to the devices this result just touched: the rows were
+    # already locked above (owners, then devices, then peers), so no new lock order is introduced.
+    await release_device_ips(db, released_candidates)
     await purge_confirmed_remnawave_deletes(db)
+    # Announce the acknowledged peers inside this transaction: the notification is delivered by the
+    # commit below, so a rollback or a crash cannot tell a page to re-read a result that was never
+    # persisted. Whichever process handles this request, every process LISTENing is notified.
+    await notify_user_changes(db, acknowledged_owner_ids, reason=REASON_NODE_SYNC)
     await db.commit()
     return {'status': 'ok'}
 
@@ -241,10 +273,14 @@ async def node_provision_result(node_id: str, data: ProvisionResult, db: DB):
 
 @router.post('/nodes/{node_id}/heartbeat-result')
 async def node_heartbeat_result(node_id: str, data: HeartbeatResult, db: DB):
-    node, peers = await load_node_with_peers(db, node_id)
+    node, peers = await load_node_with_peers(db, node_id, for_update=True)
     observed_at = utc_now()
     _apply_node_heartbeat_result(node, data, observed_at)
     if data.ok and data.peers:
-        await _apply_peer_results(db, peers, data.peers, observed_at)
+        touched_owner_ids = await _apply_peer_results(db, peers, data.peers, observed_at)
+        # A heartbeat refreshes traffic counters, which the page shows. Announce it in the same
+        # transaction as the counters and let the hub coalesce: consecutive heartbeats for one owner
+        # collapse into a single event instead of one `/info` read per heartbeat.
+        await notify_user_changes(db, touched_owner_ids, reason=REASON_NODE_HEARTBEAT)
     await db.commit()
     return {'status': node.reachability_status}

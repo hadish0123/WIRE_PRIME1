@@ -3,6 +3,7 @@ from datetime import UTC, date, datetime
 from sqlalchemy import select
 
 from app.models import (
+    Device,
     LocalAmneziawgTrafficDelta,
     LocalAmneziawgTrafficSettings,
     LocalAmneziawgUserDailyTraffic,
@@ -120,7 +121,8 @@ async def test_local_amneziawg_retention_settings_default_to_90_days(db):
 async def _create_peer(db) -> tuple[Node, User, Peer]:
     node = Node(id='node-1', name='node-1', url='http://agent:8000', token='node-token')  # noqa: S106
     user = User(id='user-1', name='alice')
-    peer = Peer(id='peer-1', node_id=node.id, user_id=user.id, status='active')
-    db.add_all([node, user, peer])
+    device = Device(id='device-1', user_id=user.id, name='Default')
+    peer = Peer(id='peer-1', node_id=node.id, user_id=user.id, device_id=device.id, status='active')
+    db.add_all([node, user, device, peer])
     await db.commit()
     return node, user, peer

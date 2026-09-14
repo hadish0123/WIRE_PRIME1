@@ -3,11 +3,12 @@ import { useI18n } from 'vue-i18n'
 import { reactive } from 'vue'
 import { operationsApi } from '../api/operations'
 import type {
+  AdminDevice,
+  DeviceNodeAvailability,
   LocalAmneziawgUsageDailyTotals,
   LocalAmneziawgUsageNodeDailyTotals,
   LocalAmneziawgUsageNodeTotals,
   LocalAmneziawgUsageTotals,
-  Node,
   TrafficPoint,
   User,
 } from '../api/types'
@@ -65,18 +66,18 @@ export function useDownloads() {
     localNodesDaily: [],
   })
 
-  async function showQr(user: User, node: Node) {
+  async function showQr(user: User, device: AdminDevice, node: DeviceNodeAvailability) {
     if (qrDialog.srcWg) URL.revokeObjectURL(qrDialog.srcWg)
     if (qrDialog.srcAmnezia) URL.revokeObjectURL(qrDialog.srcAmnezia)
-    qrDialog.title = `${user.name} / ${node.name}`
+    qrDialog.title = `${user.name} / ${device.name} / ${node.node_name}`
     qrDialog.srcWg = ''
     qrDialog.srcAmnezia = ''
     qrDialog.tab = 'wg'
     qrDialog.visible = true
     try {
       const [wgBlob, amneziaBlob] = await Promise.all([
-        operationsApi.fetchQr(user.id, node.id),
-        operationsApi.fetchQrAmnezia(user.id, node.id),
+        operationsApi.fetchDeviceQr(user.id, device.id, node.node_id),
+        operationsApi.fetchDeviceQrAmnezia(user.id, device.id, node.node_id),
       ])
       if (wgBlob) qrDialog.srcWg = URL.createObjectURL(wgBlob)
       if (amneziaBlob) qrDialog.srcAmnezia = URL.createObjectURL(amneziaBlob)
@@ -100,10 +101,10 @@ export function useDownloads() {
     URL.revokeObjectURL(url)
   }
 
-  async function downloadConfig(user: User, node: Node) {
+  async function downloadConfig(user: User, device: AdminDevice, node: DeviceNodeAvailability) {
     try {
-      const blob = await operationsApi.fetchConfig(user.id, node.id)
-      if (blob) triggerDownload(blob, `${user.name}-${node.name}.conf`)
+      const blob = await operationsApi.fetchDeviceConfig(user.id, device.id, node.node_id)
+      if (blob) triggerDownload(blob, `${user.name}-${device.name}-${node.node_name}.conf`)
     } catch (e: unknown) {
       toast.add({
         severity: 'error',
@@ -114,6 +115,7 @@ export function useDownloads() {
     }
   }
 
+  /** The user-wide archive: every live device, one folder per device, no implicit device choice. */
   async function downloadConfigZip(user: User) {
     try {
       const blob = await operationsApi.fetchConfigZip(user.id)

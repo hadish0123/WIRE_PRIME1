@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.models import (
     AsyncOperation,
+    Device,
     LocalAmneziawgTrafficSettings,
     LocalAmneziawgUserDailyTraffic,
     LocalAmneziawgUserLifetimeTraffic,
@@ -20,6 +21,7 @@ from app.models import (
     RemnawaveUser,
     User,
 )
+from app.services.devices import create_device, delete_device
 
 
 @pytest.fixture(autouse=True)
@@ -121,9 +123,14 @@ async def test_add_node(client: AsyncClient, auth_headers):
     assert data['listen_port'] == 51820
 
 
-async def test_add_node_creates_peers_for_existing_users(client: AsyncClient, auth_headers):
+async def test_add_node_creates_peers_for_existing_devices(client: AsyncClient, auth_headers, db):
+    """A new node provisions peers for live devices only (users own devices, not keypairs)."""
     headers = auth_headers
-    await client.post('/api/users', json={'name': 'alice'}, headers=headers)
+    user_resp = await client.post('/api/users', json={'name': 'alice'}, headers=headers)
+    user_id = user_resp.json()['id']
+    device, _ = await create_device(db, user_id, name='laptop')
+    await db.commit()
+
     resp = await client.post(
         '/api/nodes',
         json={'name': 'node-2', 'url': 'http://agent2:8000', 'token': 'tok'},
@@ -135,67 +142,89 @@ async def test_add_node_creates_peers_for_existing_users(client: AsyncClient, au
     assert peers_resp.status_code == HTTPStatus.OK
     assert len(peers_resp.json()) == 1
     assert peers_resp.json()[0]['user_name'] == 'alice'
+    assert peers_resp.json()[0]['vpn_ip'] == device.vpn_ip
     assert peers_resp.json()[0]['online'] is False
     assert peers_resp.json()[0]['endpoint'] is None
 
 
-async def test_create_pending_peers_is_idempotent(client: AsyncClient, auth_headers, db):
+async def test_add_node_creates_no_peers_for_device_less_users(client: AsyncClient, auth_headers):
+    """New accounts own nothing: creating a node must not invent devices or peers."""
     headers = auth_headers
     await client.post('/api/users', json={'name': 'alice'}, headers=headers)
+
+    resp = await client.post(
+        '/api/nodes',
+        json={'name': 'node-empty', 'url': 'http://agent-empty:8000', 'token': 'tok'},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.CREATED
+    node_id = resp.json()['id']
+
+    peers_resp = await client.get(f'/api/nodes/{node_id}/peers', headers=headers)
+    assert peers_resp.json() == []
+
+
+async def test_create_pending_peers_is_idempotent(client: AsyncClient, auth_headers, db):
+    headers = auth_headers
+    user_resp = await client.post('/api/users', json={'name': 'alice'}, headers=headers)
+    user_id = user_resp.json()['id']
     node_resp = await client.post(
         '/api/nodes',
         json={'name': 'node-idem', 'url': 'http://agent-idem:8000', 'token': 'tok'},
         headers=headers,
     )
     node = await db.get(Node, node_resp.json()['id'])
-    user = (await db.execute(select(User).where(User.name == 'alice'))).scalar_one()
+    device, _ = await create_device(db, user_id, name='laptop')
+    await db.commit()
 
-    from app.services.users import create_pending_peers_for_node, create_pending_peers_for_user
+    from app.services.devices import create_pending_peers_for_device, create_pending_peers_for_node
 
     await create_pending_peers_for_node(db, node)
-    await create_pending_peers_for_user(db, user)
+    await create_pending_peers_for_device(db, device)
     await db.commit()
 
     peers = (
-        (await db.execute(select(Peer).where(Peer.node_id == node.id, Peer.user_id == user.id)))
+        (await db.execute(select(Peer).where(Peer.node_id == node.id, Peer.device_id == device.id)))
         .scalars()
         .all()
     )
     assert len(peers) == 1
 
 
-async def test_create_pending_peers_for_user_is_concurrency_safe(db):
+async def test_create_pending_peers_for_device_is_concurrency_safe(db):
     node = Node(
         id='node-race',
         name='node-race',
         url='http://agent:8000',
         token='tok',  # noqa: S106
     )
-    user = User(
-        id='user-race',
-        name='alice-race',
+    user = User(id='user-race', name='alice-race')
+    device = Device(
+        id='device-race',
+        user_id=user.id,
+        name='laptop',
         public_key='alice-race-public',
         private_key='alice-race-private',
         vpn_ip='10.8.0.2',
     )
-    db.add_all([node, user])
+    db.add_all([node, user, device])
     await db.commit()
 
     session_factory = async_sessionmaker(bind=db.bind, expire_on_commit=False)
 
-    from app.services.users import create_pending_peers_for_user
+    from app.services.devices import create_pending_peers_for_device
 
     async def create_once() -> set[str]:
         async with session_factory() as session:
-            loaded_user = await session.get(User, user.id)
-            created = await create_pending_peers_for_user(session, loaded_user)
+            loaded_device = await session.get(Device, device.id)
+            created = await create_pending_peers_for_device(session, loaded_device)
             await session.commit()
             return created
 
     first, second = await asyncio.gather(create_once(), create_once())
 
     peers = (
-        (await db.execute(select(Peer).where(Peer.node_id == node.id, Peer.user_id == user.id)))
+        (await db.execute(select(Peer).where(Peer.node_id == node.id, Peer.device_id == device.id)))
         .scalars()
         .all()
     )
@@ -210,19 +239,21 @@ async def test_create_pending_peers_for_node_is_concurrency_safe(db):
         url='http://agent:8000',
         token='tok',  # noqa: S106
     )
-    user = User(
-        id='user-race-2',
-        name='alice-race-2',
+    user = User(id='user-race-2', name='alice-race-2')
+    device = Device(
+        id='device-race-2',
+        user_id=user.id,
+        name='laptop',
         public_key='alice-race-2-public',
         private_key='alice-race-2-private',
         vpn_ip='10.8.0.3',
     )
-    db.add_all([node, user])
+    db.add_all([node, user, device])
     await db.commit()
 
     session_factory = async_sessionmaker(bind=db.bind, expire_on_commit=False)
 
-    from app.services.users import create_pending_peers_for_node
+    from app.services.devices import create_pending_peers_for_node
 
     async def create_once() -> set[str]:
         async with session_factory() as session:
@@ -234,12 +265,12 @@ async def test_create_pending_peers_for_node_is_concurrency_safe(db):
     first, second = await asyncio.gather(create_once(), create_once())
 
     peers = (
-        (await db.execute(select(Peer).where(Peer.node_id == node.id, Peer.user_id == user.id)))
+        (await db.execute(select(Peer).where(Peer.node_id == node.id, Peer.device_id == device.id)))
         .scalars()
         .all()
     )
     assert len(peers) == 1
-    assert sorted([first, second], key=len) == [set(), {user.id}]
+    assert sorted([first, second], key=len) == [set(), {device.id}]
 
 
 async def test_list_nodes_after_create(client: AsyncClient, auth_headers):
@@ -446,8 +477,9 @@ async def test_add_user(client: AsyncClient, auth_headers):
     assert resp.status_code == HTTPStatus.CREATED
     data = resp.json()
     assert data['name'] == 'bob'
-    assert data['public_key'] is not None
-    assert data['vpn_ip'] is not None
+    # an account owns nothing until a device is added: no legacy keypair, no implicit device
+    assert data['public_key'] is None
+    assert data['vpn_ip'] is None
     assert not data['is_blocked']
 
 
@@ -458,29 +490,36 @@ async def test_add_user_with_name(client: AsyncClient, auth_headers):
     assert resp.status_code == HTTPStatus.CREATED
     data = resp.json()
     assert data['name'] == 'test-name'
-    assert data['public_key'] is not None
-    assert data['vpn_ip'] is not None
+    assert data['public_key'] is None
+    assert data['vpn_ip'] is None
     assert data['is_blocked'] is False
 
 
-async def test_list_users_with_peers(client: AsyncClient, auth_headers):
+async def test_list_users_with_peers(client: AsyncClient, auth_headers, db):
+    """Peers are listed per owner; the retained owner columns keep no key material."""
     headers = auth_headers
-    await client.post(
+    node_resp = await client.post(
         '/api/nodes',
         json={'name': 'n1', 'url': 'http://agent:8000', 'token': 'tok'},
         headers=headers,
     )
-    await client.post('/api/users', json={'name': 'dave'}, headers=headers)
+    user_resp = await client.post('/api/users', json={'name': 'dave'}, headers=headers)
+    device, node_ids = await create_device(db, user_resp.json()['id'], name='laptop')
+    await db.commit()
+    assert node_ids == {node_resp.json()['id']}
 
     resp = await client.get('/api/users', headers=headers)
     assert resp.status_code == HTTPStatus.OK
     users = resp.json()
     assert len(users) >= 1
     dave = next(u for u in users if u['name'] == 'dave')
-    assert dave['public_key'] is not None
-    assert dave['vpn_ip'] is not None
+    # the device owns the credentials; the frozen legacy user columns stay empty
+    assert device.public_key is not None
+    assert dave['public_key'] is None
+    assert dave['vpn_ip'] is None
     assert dave['online'] is False
-    assert len(dave['peers']) >= 1
+    assert len(dave['peers']) == 1
+    assert dave['peers'][0]['node_name'] == 'n1'
     assert dave['peers'][0]['online'] is False
     assert dave['peers'][0]['endpoint'] is None
 
@@ -491,15 +530,24 @@ async def test_online_fields_are_derived_from_peer_handshake(client: AsyncClient
     now = datetime.now(UTC)
     node = Node(id='online-node', name='online-node', url='http://agent:8000', token='tok')  # noqa: S106
     user = User(id='online-user', name='online-user')
+    device = Device(
+        id='online-device',
+        user_id=user.id,
+        name='Default',
+        public_key='online-public',
+        private_key='online-private',
+        vpn_ip='10.8.0.7',
+    )
     peer = Peer(
         id='online-peer',
         node_id=node.id,
         user_id=user.id,
+        device_id=device.id,
         status='active',
         last_handshake=now - timedelta(seconds=60),
         endpoint='203.0.113.10:54321',
     )
-    db.add_all([node, user, peer])
+    db.add_all([node, user, device, peer])
     await db.commit()
 
     users_resp = await client.get('/api/users', headers=auth_headers)
@@ -524,13 +572,22 @@ async def test_online_fields_are_derived_from_peer_handshake(client: AsyncClient
 async def test_node_peers_expose_blocked_flag(client: AsyncClient, auth_headers, db):
     node = Node(id='blocked-node', name='blocked-node', url='http://agent:8000', token='tok')  # noqa: S106
     user = User(id='blocked-user', name='blocked-user', is_blocked=True)
+    device = Device(
+        id='blocked-device',
+        user_id=user.id,
+        name='Default',
+        public_key='blocked-public',
+        private_key='blocked-private',
+        vpn_ip='10.8.0.9',
+    )
     peer = Peer(
         id='blocked-peer',
         node_id=node.id,
         user_id=user.id,
+        device_id=device.id,
         status='pending',
     )
-    db.add_all([node, user, peer])
+    db.add_all([node, user, device, peer])
     await db.commit()
 
     resp = await client.get(f'/api/nodes/{node.id}/peers', headers=auth_headers)
@@ -546,7 +603,12 @@ async def test_node_peers_expose_blocked_flag(client: AsyncClient, auth_headers,
             'created_at': ANY,
             'user_name': user.name,
             'node_name': node.name,
-            'vpn_ip': None,
+            # the peer is keyed by its device: the row carries the device identity, not only the
+            # owner, because one owner can hold several devices on the same node
+            'device_id': device.id,
+            'device_name': device.name,
+            # the node peer reports the device's IP, not the frozen legacy user column
+            'vpn_ip': device.vpn_ip,
             'endpoint': None,
             'last_handshake': None,
             'online': False,
@@ -639,16 +701,86 @@ async def test_unblock_user(client: AsyncClient, auth_headers):
     assert resp.json()['is_blocked'] is False
 
 
+async def test_local_unblock_creates_missing_node_peer_without_reviving_deleted_device(
+    client: AsyncClient, auth_headers, db
+):
+    node_a = await client.post(
+        '/api/nodes',
+        json={'name': 'a', 'url': 'http://agent-a:8000', 'token': 'tok'},
+        headers=auth_headers,
+    )
+    assert node_a.status_code == HTTPStatus.CREATED
+    node_a_id = node_a.json()['id']
+    user = await client.post('/api/users', json={'name': 'recover'}, headers=auth_headers)
+    assert user.status_code == HTTPStatus.CREATED
+    user_id = user.json()['id']
+    live, _ = await create_device(db, user_id, name='live')
+    deleted, _ = await create_device(db, user_id, name='deleted')
+    await delete_device(db, deleted)
+    await db.commit()
+    live_id, deleted_id = live.id, deleted.id
+
+    blocked = await client.put(f'/api/users/{user_id}/block', headers=auth_headers)
+    assert blocked.status_code == HTTPStatus.OK
+    assert blocked.json()['is_blocked'] is True
+    node_b = await client.post(
+        '/api/nodes',
+        json={'name': 'b', 'url': 'http://agent-b:8000', 'token': 'tok'},
+        headers=auth_headers,
+    )
+    assert node_b.status_code == HTTPStatus.CREATED
+    node_b_id = node_b.json()['id']
+    peers_b = await client.get(f'/api/nodes/{node_b_id}/peers', headers=auth_headers)
+    assert peers_b.status_code == HTTPStatus.OK
+    assert peers_b.json() == []
+
+    with patch('app.routers.api.enqueue_sync_node', new=AsyncMock()) as enqueue:
+        restored = await client.put(f'/api/users/{user_id}/unblock', headers=auth_headers)
+    assert restored.status_code == HTTPStatus.OK
+    assert restored.json()['is_blocked'] is False
+    assert sorted(call.args[0] for call in enqueue.await_args_list) == sorted(
+        [node_a_id, node_b_id]
+    )
+    db.expire_all()
+    peers = (await db.execute(select(Peer).where(Peer.user_id == user_id))).scalars().all()
+    assert {(peer.device_id, peer.node_id, peer.status) for peer in peers} == {
+        (live_id, node_a_id, 'pending'),
+        (live_id, node_b_id, 'pending'),
+        (deleted_id, node_a_id, 'pending_delete'),
+    }
+    tombstone = await db.get(Device, deleted_id)
+    assert tombstone.deleted_at is not None
+    operation_ids = [call.kwargs['operation_id'] for call in enqueue.await_args_list]
+    operations = (
+        (await db.execute(select(AsyncOperation).where(AsyncOperation.id.in_(operation_ids))))
+        .scalars()
+        .all()
+    )
+    assert {(op.kind, op.target_id, op.status) for op in operations} == {
+        ('sync_node', node_a_id, 'queued'),
+        ('sync_node', node_b_id, 'queued'),
+    }
+
+
 async def test_block_nonexistent_user(client: AsyncClient, auth_headers):
     headers = auth_headers
     resp = await client.put('/api/users/nonexistent/block', headers=headers)
     assert resp.status_code == HTTPStatus.NOT_FOUND
 
 
-async def test_delete_user(client: AsyncClient, auth_headers):
+async def test_delete_user(client: AsyncClient, auth_headers, db):
+    """The delete route still keys on the retained legacy columns in this slice.
+
+    A migration-era account has per-user credentials, so it deletes cleanly. A device-only account
+    currently cannot pass this guard - device-aware user deletion is next-phase work (see the
+    handoff notes), not a change made here.
+    """
     headers = auth_headers
     user_resp = await client.post('/api/users', json={'name': 'delete-me'}, headers=headers)
     user_id = user_resp.json()['id']
+    user = await db.get(User, user_id)
+    user.public_key = 'delete-me-public'
+    await db.commit()
 
     resp = await client.delete(f'/api/users/{user_id}', headers=headers)
     assert resp.status_code == HTTPStatus.NO_CONTENT
@@ -703,11 +835,26 @@ async def test_user_local_traffic_returns_lifetime_daily_and_node_breakdowns(
         private_key='user-private',
         vpn_ip='10.8.0.2',
     )
-    peer = Peer(id='peer-local-1', node_id=node.id, user_id=user.id, status='active')
+    peer = Peer(
+        id='peer-local-1',
+        node_id=node.id,
+        user_id=user.id,
+        device_id='user-local-1-device',
+        status='active',
+    )
     db.add_all(
         [
             node,
             user,
+            Device(
+                id='user-local-1-device',
+                user_id=user.id,
+                name='Default',
+                public_key='user-public',
+                private_key='user-private',
+                vpn_ip='10.8.0.2',
+                is_legacy_default=True,
+            ),
             peer,
             LocalAmneziawgUserLifetimeTraffic(
                 user_id=user.id,

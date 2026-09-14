@@ -11,6 +11,7 @@ from app.models import (
     LocalAmneziawgUserNodeLifetimeTraffic,
     User,
 )
+from app.services.devices import restore_missing_peers_for_user, tombstoned_device_ids
 
 
 def aware(value: datetime | None) -> datetime | None:
@@ -65,6 +66,14 @@ async def load_local_total_bytes(db: AsyncSession, user_id: str) -> int:
 async def apply_local_lifecycle_state(
     db: AsyncSession, user: User, *, local_total_bytes: int | None = None
 ) -> set[str]:
+    """Re-derive the owner's state and return the node ids that need a sync.
+
+    Only a *transition* provisions: recovering from blocked/expired/limited back to active rebuilds
+    the peers that blocking removed and the ones a node that appeared meanwhile never got, while a
+    pass over an already active account touches nothing. ``was_blocked`` is captured before this
+    function overwrites the state.
+    """
+    was_blocked = user.is_blocked or user.lifecycle_status != 'active'
     total = local_total_bytes
     if total is None:
         total = await load_local_total_bytes(db, user.id)
@@ -83,15 +92,23 @@ async def apply_local_lifecycle_state(
     user.is_blocked = should_block
 
     affected_node_ids: set[str] = set()
+    tombstoned_devices = await tombstoned_device_ids(db, (peer.device_id for peer in user.peers))
     for peer in user.peers:
         if should_block:
             if peer.status != 'pending_delete':
                 peer.status = 'pending_delete'
                 affected_node_ids.add(peer.node_id)
             continue
-        if peer.status in {'pending_delete', 'deleted'}:
+        # Unblocking may restore blocked peers, but never a peer whose device is tombstoned: device
+        # deletion is durable intent that no lifecycle transition may undo.
+        is_tombstoned_peer = peer.status in {'pending_delete', 'deleted'}
+        if is_tombstoned_peer and peer.device_id not in tombstoned_devices:
             peer.status = 'pending'
             affected_node_ids.add(peer.node_id)
+    if was_blocked and not should_block:
+        # Recovery must also cover what blocking *prevented*: a node added while the owner was
+        # blocked has no peer for any of its live devices, so the known peers alone are not enough.
+        affected_node_ids |= await restore_missing_peers_for_user(db, user.id)
     return affected_node_ids
 
 

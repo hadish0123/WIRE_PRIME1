@@ -159,6 +159,8 @@ Node snapshot shape:
       "peer_id": "peer id",
       "user_id": "user id",
       "user_name": "alice",
+      "device_id": "device id",
+      "device_name": "laptop",
       "public_key": "client public key",
       "allowed_ip": "10.8.0.2",
       "psk_key": "preshared key",
@@ -168,6 +170,141 @@ Node snapshot shape:
   ]
 }
 ```
+
+### Ownership, peers and deletion semantics
+
+- A `Peer` binds a `Device` to a `Node`. The account owns the subscription, lifecycle, limits and
+  traffic aggregates; the device owns its keypair, VPN IP and peers. `user_id` on a peer is retained
+  for accounting and is guaranteed by the database to match the device's owner (composite foreign key
+  `(device_id, user_id) -> devices (id, user_id)`).
+- One owner may hold several peers on one node - one per device - so `uq_peers_node_device`
+  (`node_id`, `device_id`) is the uniqueness rule. `uq_peers_node_user` no longer exists.
+- Peers are matched between snapshot and node results by **public key**, not by `user_id`: the
+  backend builds its per-node result map from `device.public_key`. Two devices of one owner must
+  therefore always have distinct keys, and a node result can never touch the wrong device.
+- Deletion order: deleting a device stops counting against the owner's device limit immediately and
+  marks its peers `pending_delete`; the peer rows, the device row and all traffic history stay until
+  the node confirms removal (`deleted`). Device deletion never hard-deletes peers. Once **every**
+  retained peer of a tombstoned device is confirmed `deleted`, the device's VPN IP is released for
+  reuse: `vpn_ip` becomes `NULL` and the address is kept in `released_vpn_ip` with `ip_released_at`.
+  A device with no peers at all is released as soon as it is tombstoned. Deleting a management node
+  cascades its database peers and may release tombstoned devices only when no live peers remain on
+  retained managed nodes. It does **not** remove physical peers or revoke tunnels on the detached
+  node: operators must decommission that node separately before address reuse is safe there.
+  A live device never releases its address.
+- The subnet is finite (`VPN_SUBNET`, `10.8.0.0/24` by default: ~250 client addresses). When nothing
+  is free - every address is held by a live device or by a deletion no node has confirmed - adding a
+  device answers `503` with the reason instead of `500`.
+- Deleted (tombstoned) devices are durable intent. A node result that still reports the key cannot
+  move such a peer back to `active`/`pending`, and unblock/reconcile paths cannot resurrect it: the
+  backend re-reads the device tombstone and forces the peer to `pending_delete` again. The worker is
+  not required to know this; it must simply report what the node actually has.
+- Recovery provisions, it does not resurrect: a blocked -> active transition (local lifecycle or an
+  imported Remnawave profile) both restores the peers the block marked for removal and creates the
+  pending peers a node added while the account was blocked never got, then queues exactly those
+  nodes with the normal `sync_node` operation. No new command is involved. An unchanged status is a
+  no-op, so periodic reconcile does not rebuild peers, and recovery never creates a device or
+  touches a tombstoned one.
+- Accounts created after this change (local or imported from Remnawave) start with **no** devices,
+  keys or peers, so a freshly imported Remnawave profile produces an empty `affected_node_ids`. Node
+  work appears only once a device is added and its pending peers are created.
+
+### Public shape notes (device API, `/pub/u/{token}`)
+
+- Readiness is derived per device **and** per node, from the peer row and the node row only; there is
+  no device status column and no global per-account "operation". A node is `ready` when its own peer
+  is `active`, the node's cached server public key/endpoint exist, the device has usable credentials
+  and the account is active; `error` follows a failed node sync; `deleting` follows a tombstoned
+  device's peer. A partial result is never reported as fully ready.
+- Public config/QR/chunk downloads require that active peer: a pending peer is `503`, never a config
+  built from the device credentials alone. Blocked/expired/traffic-limited accounts get `403` from
+  every download route, while device deletion stays allowed for the owner so access can be revoked.
+- Device add/delete persists the device, its pending peers **and** the tracked `sync_node` operation
+  rows in one transaction before anything is published, so a broker failure or crash cannot lose the
+  intent: rows survive as `enqueue_failed`/`queued`, the public summary keeps reporting pending, and
+  periodic sync is only the recovery path. Publishing happens after that commit, never while holding
+  the owner/device row locks.
+- Legacy `/pub/u/{token}/{config,qr,qr-chunks}/...` routes resolve through the durable migration
+  `is_legacy_default` device and its peers: a missing or deleted migration device is `404`, and no
+  other device is ever substituted for it.
+
+### Admin device API (bearer-authenticated admin surface)
+
+- `GET /users` — every owner with, per owner, `device_limit`, `effective_device_limit`,
+  `device_count` and `devices[]`. Each device carries `id`, `name`, `vpn_ip`, `is_legacy_default`,
+  `created_at`, aggregate `status` and `nodes[]` (`node_id`, `node_name`, `status`, `ready`). Peers
+  are reported as `PeerBrief` with `device_id`/`device_name`, so a peer row is identified per device,
+  never per owner or per node alone.
+- `GET /users/{user_id}/devices` — `AdminUserDevices`: `{user_id, device_limit,
+  effective_device_limit, device_count, devices[]}`. Readable for blocked accounts (an administrative
+  need); key material is never included.
+- `PUT /users/{user_id}/device-limit` — body `{device_limit: int >= 0}` where `0` means unlimited;
+  returns the same `AdminUserDevices`. The owner row is locked first, so the write serializes against
+  device creation, and lowering the limit never deletes a device. A Remnawave-managed owner is
+  refused (`409`) because its limit is imported, not local.
+- `GET /users/{user_id}/devices/{device_id}/configs`, `.../configs/zip`, `.../configs/{node_id}`,
+  `.../qr/{node_id}`, `.../qr-amnezia/{node_id}` — device-scoped downloads; an unready node is
+  reported instead of omitted.
+- `GET /users/{user_id}/configs/zip` — the user-wide archive, one folder per live device, so it
+  takes no device id. The legacy `/users/{user_id}/configs/{node_id}` and `/qr*` routes resolve only
+  the migration `Default` device.
+
+### Public device API (`/pub/u/{token}`)
+
+- `GET /pub/u/{id}/info` — `{user_name, blocked, device_limit, device_count, can_add_device,
+  telegram_proxy, status, ..., nodes[], devices[]}`. `devices[]` is per device with its own per-node
+  `status`/`ready`; legacy `nodes[]` stays scoped to the migration device's live peers.
+- `POST /pub/u/{id}/devices` — body `{name}` → `201` device summary; `DELETE
+  /pub/u/{id}/devices/{device_id}` tombstones an own device and queues node removal. `POST` answers
+  `503` when the finite address pool has nothing free right now, `409` when the device limit is
+  reached and `403` for an inactive account.
+- Downloads: `.../devices/{device_id}/config/awg/{node_id}`, `.../config/vpn/{node_id}`,
+  `.../qr/awg/{node_id}`, `.../qr/vpn/{node_id}`, `.../qr-chunks/vpn/{node_id}`.
+
+Readiness semantics: `status` is `ready | pending | error | deleting`. `ready` requires the peer to
+be `active` with cached node metadata and usable device credentials; `error` follows the node's last
+failed sync; `deleting` follows a tombstoned device's peer. `ready` and `status` come from the single
+rule in `app.services.devices`, so the admin API and the public page agree on when a config is
+downloadable. Every download requires an `active` peer (`503` while pending).
+
+### Live updates (`/pub/u/{id}/events`, SSE)
+
+- One `text/event-stream` per account. Frames: `connected` `{user_id, notifications}`, `changed`
+  `{reason}`, `unauthorized` `{reason}`, and `: keepalive` comments. No key, config body or profile
+  data ever appears in a frame; the client re-reads `/pub/u/{token}/info`.
+- Delivery is transactional over PostgreSQL `LISTEN`/`NOTIFY`: the notification is recorded inside
+  the transaction that writes the change, so a commit delivers it and a rollback notifies nobody.
+  Every backend process LISTENs on the same channel and **all backend processes must share one
+  database** for a change committed by one process to reach a stream held by another.
+- `notifications: false` on `connected` means this process has no listener and the client's polling
+  is the transport. A reverse proxy must not buffer the stream (the response sets
+  `X-Accel-Buffering: no` for nginx).
+
+### Async operations and node sync
+
+- Device add/delete persists the device, its pending peers and the tracked `sync_node` operation rows
+  in one transaction *before* anything is published. A broker failure therefore leaves the rows as
+  `enqueue_failed`/`queued` instead of losing the intent, and nothing is published while holding the
+  owner/device row locks. Periodic sync is only the recovery path.
+- Node results match peers by **public key**, so the worker stays wire-compatible: its snapshot and
+  result payloads are unchanged and it only gains the optional `device_id`/`device_name` fields in
+  snapshots. Two devices of one owner must always hold distinct keys.
+
+### Safe deployment order (device ownership, migrations 0019 and 0020)
+
+- Stop the backend and the worker, apply migration `0019_device_ownership`, then the additive
+  `0020_device_ip_release`, then start the new backend, then the worker. Old backend writers must not
+  run against the migrated schema (they do not set `peers.device_id`) and the new backend must not run
+  before the migrations are applied; there is no lazy backfill at runtime. `0020` only adds two
+  nullable `devices` columns (`released_vpn_ip`, `ip_released_at`) and backfills nothing - a release
+  only ever happens at runtime, after a node confirms the peer is gone.
+- The worker itself needs no change for this release: its snapshot and result payloads stay
+  wire-compatible and peer reconciliation was already keyed by `public_key`. It only gains the
+  optional `device_id`/`device_name` fields in snapshots.
+- The migration refuses to run (leaving `0018` untouched) when existing users share a client public
+  key or when peers reference a missing user, and it refuses a downgrade to `0018` once any device is
+  deleted or any non-migration device exists. Resolve those conditions manually instead of
+  force-stamping.
 
 ### Results
 
@@ -200,6 +337,10 @@ Node snapshot shape:
   - Response: `{"status":"ok"}` or `{"status":"failed"}`
   - On success the backend sets `sync_status` to `succeeded` and updates `last_synced_at`.
   - On failure the backend sets `sync_status` to `failed` and stores `sync_error` plus `last_error`.
+    It also notifies the owners holding a peer on that node (reason `node.sync`, transactional with
+    the write, ids only - never the error text): the page renders the node's `error` diagnostic, while
+    a peer the node already acknowledged stays downloadable because availability does not depend on
+    the node's diagnostic state.
   - Peer `endpoint` is the latest endpoint IP:port observed by the node agent from `awg show dump`; it is stored as a local inferred endpoint/session fact, not as a device or HWID identity.
   - Peer counters update local AmneziaWG accounting. If combined Remnawave imported usage plus local AmneziaWG lifetime usage reaches the imported traffic limit, this endpoint can block local peers, queue follow-up node sync for affected nodes, and enqueue `remnawave_disable_user` jobs for affected Remnawave users.
 
@@ -352,3 +493,37 @@ Public endpoint `POST /api/remnawave/webhook` receives Remnawave webhooks:
 - Ownership is one-way: Remnawave is the source of truth. Amnezia does not push traffic counter changes back to Remnawave.
 - Exception: combined-limit enforcement may call Remnawave's user lifecycle disable action.
 - Users created from Remnawave are not automatically linked to existing local users. A new local user is created for each Remnawave profile.
+
+## Testing
+
+Backend (SQLite, no live services needed):
+
+```bash
+uv run --directory panel/backend pytest -q
+```
+
+Backend PostgreSQL-only suites are **opt-in**. They refuse the ambient `DATABASE_URL` and any
+database whose name does not contain `test`, and each test creates and drops one randomly named
+schema:
+
+```bash
+cd panel/backend
+AMNEZIA_TEST_POSTGRES_URL=postgresql+asyncpg://user:pass@127.0.0.1:5432/amnezia_test \
+    uv run pytest -q tests/test_postgres_notify.py tests/test_postgres_lock_ordering.py
+```
+
+Those two cover transactional `pg_notify` (a commit delivers, a rollback drops, cross-process
+fan-out) and the owner → device → peer lock order between a node result and device deletion.
+
+Frontends (plain Node, no bundler needed):
+
+```bash
+cd panel/admin-frontend && npm test   # node --test tests/deviceConfigUrls.test.mts
+cd panel/user-frontend  && npm test   # node --test "tests/**/*.test.ts"
+```
+
+The admin suite pins the device-scoped URL contract: per-device config/QR paths, the user-wide
+archive, the local limit write, and `peerRowKey` = `device:node` (never the owner or node alone).
+
+The test database is never ambient: no suite falls back to `DATABASE_URL`, a production URL, or an
+implicit local database.

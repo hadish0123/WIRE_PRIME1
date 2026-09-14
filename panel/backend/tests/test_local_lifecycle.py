@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models import (
+    Device,
     LocalAmneziawgUserDailyTraffic,
     LocalAmneziawgUserLifetimeTraffic,
     LocalAmneziawgUserNodeDailyTraffic,
@@ -36,6 +37,7 @@ from app.models import (
     RemnawaveUser,
     User,
 )
+from app.services.devices import create_device, delete_device
 from app.services.local_lifecycle import (
     apply_local_lifecycle_state,
     aware,
@@ -69,6 +71,19 @@ def _make_user(**overrides: Any) -> User:
     }
     defaults.update(overrides)
     return User(**defaults)
+
+
+def _make_device(user: User) -> Device:
+    """Migration-shaped device fixture: it carries the credentials of its owner."""
+    return Device(
+        id=f'{user.id}-device',
+        user_id=user.id,
+        name='Default',
+        public_key=user.public_key,
+        private_key=user.private_key,
+        vpn_ip=user.vpn_ip,
+        is_legacy_default=True,
+    )
 
 
 def test_aware_makes_naive_datetime_utc() -> None:
@@ -205,13 +220,15 @@ async def test_apply_local_lifecycle_state_expires_and_blocks_peers(
         id='u-expire',
         expire_at=datetime(2020, 1, 1, tzinfo=UTC),
     )
+    device = _make_device(user)
     peer = Peer(
         node=node,
         user=user,
+        device=device,
         status='pending',
         psk_key='p',
     )
-    db.add_all([node, user, peer])
+    db.add_all([node, user, device, peer])
     await db.commit()
     user_id = user.id
     peer_id = peer.id
@@ -267,13 +284,15 @@ async def test_apply_local_lifecycle_state_restores_pending_peers_on_recovery(
         token='tok',  # noqa: S106
     )
     user = _make_user(id='u-restore')
+    device = _make_device(user)
     peer = Peer(
         node=node,
         user=user,
+        device=device,
         status='pending_delete',
         psk_key='p',
     )
-    db.add_all([node, user, peer])
+    db.add_all([node, user, device, peer])
     await db.commit()
     user_id = user.id
     peer_id = peer.id
@@ -304,13 +323,15 @@ async def test_apply_local_lifecycle_state_keeps_pending_delete_for_re_blocked_p
         url='http://agent',
         token='tok',  # noqa: S106
     )
+    device = _make_device(user)
     peer = Peer(
         node=node,
         user=user,
+        device=device,
         status='pending_delete',
         psk_key='p',
     )
-    db.add_all([node, user, peer])
+    db.add_all([node, user, device, peer])
     await db.commit()
     user_id = user.id
     peer_id = peer.id
@@ -324,6 +345,112 @@ async def test_apply_local_lifecycle_state_keeps_pending_delete_for_re_blocked_p
     reloaded_peer = await db.get(Peer, peer_id)
     assert reloaded_peer is not None
     assert reloaded_peer.status == 'pending_delete'
+
+
+async def test_unblock_provisions_the_peers_a_node_added_while_blocked_is_missing(
+    db: AsyncSession,
+) -> None:
+    """Recovery covers every live device on every existing node, not only the peers it remembers.
+
+    A node that appeared while the account was blocked has no peer for any of its devices, so
+    restoring the known peers alone would leave the recovered account without a config there.
+    """
+    node_a = Node(
+        id='node-a',
+        name='a',
+        url='http://agent-a:8000',
+        token='tok-a',  # noqa: S106
+    )
+    user = _make_user(id='u-recover')
+    device = _make_device(user)
+    peer_a = Peer(node=node_a, user=user, device=device, status='active', psk_key='psk-a')
+    db.add_all([node_a, user, device, peer_a])
+    await db.commit()
+    user_id = user.id
+    device_id = device.id
+
+    loaded = await _load_user_with_peers(db, user_id)
+    loaded.lifecycle_status = 'blocked'
+    blocked_nodes = await apply_local_lifecycle_state(db, loaded)
+    await db.commit()
+    assert blocked_nodes == {'node-a'}
+
+    # a node added while the account is blocked gets no peer: nothing provisions for a blocked owner
+    db.add(
+        Node(id='node-b', name='b', url='http://agent-b:8000', token='tok-b')  # noqa: S106
+    )
+    await db.commit()
+    assert (await db.execute(select(Peer).where(Peer.node_id == 'node-b'))).scalars().all() == []
+
+    loaded = await _load_user_with_peers(db, user_id)
+    loaded.lifecycle_status = 'active'
+    affected = await apply_local_lifecycle_state(db, loaded)
+    await db.commit()
+    db.expire_all()
+
+    peers = (
+        (await db.execute(select(Peer).where(Peer.device_id == device_id).order_by(Peer.node_id)))
+        .scalars()
+        .all()
+    )
+    assert [peer.node_id for peer in peers] == ['node-a', 'node-b']
+    assert {peer.node_id: peer.status for peer in peers} == {
+        'node-a': 'pending',
+        'node-b': 'pending',
+    }
+    assert peers[0].psk_key == 'psk-a'
+    assert peers[1].psk_key and peers[1].psk_key != 'psk-a'
+    # the restored peer and the newly provisioned one are both queued immediately
+    assert affected == {'node-a', 'node-b'}
+
+
+async def test_recovery_never_provisions_a_tombstoned_device_or_an_owner_without_devices(
+    db: AsyncSession,
+) -> None:
+    """Device deletion is durable intent: no lifecycle transition may bring its peer back."""
+    node_a = Node(
+        id='node-a',
+        name='a',
+        url='http://agent-a:8000',
+        token='tok-a',  # noqa: S106
+    )
+    user = _make_user(id='u-tombstone')
+    device = _make_device(user)
+    peer = Peer(node=node_a, user=user, device=device, status='active', psk_key='psk-a')
+    db.add_all([node_a, user, device, peer])
+    await db.commit()
+    user_id = user.id
+    device_id = device.id
+
+    await delete_device(db, device)
+    await db.commit()
+
+    loaded = await _load_user_with_peers(db, user_id)
+    loaded.lifecycle_status = 'blocked'
+    await apply_local_lifecycle_state(db, loaded)
+    await db.commit()
+
+    loaded = await _load_user_with_peers(db, user_id)
+    loaded.lifecycle_status = 'active'
+    affected = await apply_local_lifecycle_state(db, loaded)
+    await db.commit()
+    db.expire_all()
+
+    peers = (await db.execute(select(Peer).where(Peer.device_id == device_id))).scalars().all()
+    assert [peer.status for peer in peers] == ['pending_delete']
+    assert affected == set()
+
+    # an account with no device at all still owns nothing after a lifecycle pass
+    empty = _make_user(id='u-empty', name='empty')
+    db.add(empty)
+    await db.commit()
+    loaded_empty = await _load_user_with_peers(db, empty.id)
+    assert await apply_local_lifecycle_state(db, loaded_empty) == set()
+    await db.commit()
+    assert (
+        await db.execute(select(Device).where(Device.user_id == empty.id))
+    ).scalars().all() == []
+    assert (await db.execute(select(Peer).where(Peer.user_id == empty.id))).scalars().all() == []
 
 
 async def test_enforce_local_lifecycle_for_user_skips_remnawave_user(
@@ -535,6 +662,10 @@ async def test_update_local_lifecycle_set_limit_blocks_user_and_marks_peers(
 
     body = await _create_local_user(client, headers)
     user_id = body['id']
+    # devices (and their peers) are created explicitly, never by account provisioning
+    _, node_ids = await create_device(db, user_id, name='laptop')
+    await db.commit()
+    assert node_ids == {'node-lc-limit'}
 
     db.add(
         LocalAmneziawgUserLifetimeTraffic(
@@ -1016,13 +1147,15 @@ async def test_node_sync_result_enforces_local_limit_and_enqueues_sync(
         traffic_limit_bytes=1_000,
         public_key='pk-sync-limited',
     )
+    device = _make_device(user)
     peer = Peer(
         node_id=node.id,
         user_id=user.id,
+        device_id=device.id,
         status='pending',
         psk_key='psk',
     )
-    db.add_all([node, user, peer])
+    db.add_all([node, user, device, peer])
     await db.flush()
     peer.raw_rx = 100
     peer.raw_tx = 100
@@ -1076,13 +1209,15 @@ async def test_node_sync_result_does_not_enforce_lifecycle_for_remnawave_user(
         traffic_limit_bytes=1_000,
         public_key='pk-sync-rw',
     )
+    device = _make_device(user)
     peer = Peer(
         node_id=node.id,
         user_id=user.id,
+        device_id=device.id,
         status='pending',
         psk_key='psk',
     )
-    db.add_all([node, user, peer])
+    db.add_all([node, user, device, peer])
     await db.flush()
     db.add(
         RemnawaveUser(

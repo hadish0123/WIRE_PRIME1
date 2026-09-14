@@ -27,10 +27,12 @@
               {{ primaryIdentity(user) }}
             </button>
             <div class="user-subline">
-              <code v-if="user.vpn_ip">{{ user.vpn_ip }}</code>
+              <code v-if="deviceIps(user)">{{ deviceIps(user) }}</code>
               <span v-else class="dim">{{ $t('userTable.ipNotAssigned') }}</span>
               <span>•</span>
-              <span>{{ $t('userTable.nodesCount', { count: user.peers.length }) }}</span>
+              <span>{{ $t('userTable.devicesCount', { count: user.device_count }) }}</span>
+              <span>•</span>
+              <span>{{ $t('userTable.deviceLimit') }}: {{ deviceLimitLabel(user) }}</span>
             </div>
           </div>
         </div>
@@ -204,6 +206,20 @@ function sourceLabel(user: User): string {
     ? ` · ${t('userTable.expires', { date: fmtDate(user.remnawave.expire_at) })}`
     : ''
   return `${t('userTable.remnawaveUser')}${expires}`
+}
+
+/** Every device IP of the owner; there is no single account-wide address any more. */
+function deviceIps(user: User): string {
+  return user.devices
+    .map((device) => device.vpn_ip)
+    .filter((ip): ip is string => !!ip)
+    .join(', ')
+}
+
+/** ``0`` means unlimited; a Remnawave owner is displayed with its imported limit. */
+function deviceLimitLabel(user: User): string {
+  const limit = user.remnawave ? user.remnawave.hwid_device_limit ?? 0 : user.effective_device_limit
+  return limit > 0 ? String(limit) : t('userTable.deviceLimitUnlimited')
 }
 
 function usageLabel(user: User): string {

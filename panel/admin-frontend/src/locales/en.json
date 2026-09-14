@@ -77,7 +77,10 @@
     "syncError": "Sync error",
     "copyLink": "Copy link",
     "openDetails": "Open details",
-    "details": "Details"
+    "details": "Details",
+    "devicesCount": "{count} devices",
+    "deviceLimit": "Device limit",
+    "deviceLimitUnlimited": "unlimited"
   },
   "userDetail": {
     "kicker": "User profile",
@@ -133,7 +136,23 @@
     "dangerZoneHint": "Deleting a local user is irreversible.",
     "deleteUser": "Delete local user",
     "placeholderTitle": "Select a user",
-    "placeholderText": "Select a user from the list to view details and perform actions."
+    "placeholderText": "Select a user from the list to view details and perform actions.",
+    "devices": "Devices and configs",
+    "devicesHint": "Keys, IPs and configs belong to a device: pick a device and a server.",
+    "deviceCount": "Devices",
+    "deviceNoNodes": "This device has no servers yet.",
+    "noDevices": "This user has no devices yet.",
+    "noDevicesHint": "Configs appear once the user adds a device on the self-service page.",
+    "inviteDevice": "Send the add-device link",
+    "deviceLegacy": "From migration",
+    "labelDeviceLimit": "Device limit",
+    "labelDeviceIp": "Device IP",
+    "labelDeviceIps": "Device IPs",
+    "labelServer": "Server",
+    "deviceLimitHint": "0 means unlimited. The limit applies to this panel only.",
+    "saveDeviceLimit": "Save limit",
+    "deviceLimitRemnawave": "Remnawave",
+    "deviceLimitRemnawaveHint": "The device limit is imported from Remnawave and is read-only here."
   },
   "userMobile": {
     "loading": "Loading users…",
@@ -169,7 +188,9 @@
     "unblock": "Unblock",
     "blockAction": "Block",
     "delete": "Delete",
-    "viewOnly": "View only"
+    "viewOnly": "View only",
+    "config": "Config",
+    "noDevices": "no devices"
   },
   "nodes": {
     "kicker": "Servers",
@@ -193,6 +214,8 @@
     "actions": "Actions",
     "noPeers": "No peers assigned yet.",
     "user": "User",
+    "device": "Device",
+    "deviceUnknown": "device unknown",
     "ip": "IP",
     "status": "Status",
     "heartbeatError": "Heartbeat error",
@@ -499,6 +522,12 @@
     "limited": "Limited",
     "expired": "Expired",
     "deleted": "Deleted"
+  },
+  "deviceStatus": {
+    "ready": "Ready",
+    "pending": "Waiting to be applied",
+    "error": "Server error",
+    "deleting": "Deleting"
   },
   "nodeStage": {
     "ready": "Ready",

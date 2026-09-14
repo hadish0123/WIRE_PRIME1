@@ -341,6 +341,115 @@ Amnezia can sync users from [Remnawave](https://remnawave.com) via API polling o
 
 ---
 
+## Multi-device accounts
+
+An Amnezia account (the "user") owns its lifecycle, limits and traffic aggregates; each **device**
+owns its own keypair, VPN IP and peers. One account may hold several devices on the same node, so a
+peer is identified by its `(device, node)` pair - never by the owner or the node alone.
+
+- **Existing accounts** keep working: migration `0019` gives every account that existed one device
+  named `Default` that inherits its key material, VPN IP, peer rows (ids and pre-shared keys) and
+  traffic history. Nothing is regenerated and no peer row is deleted.
+- **New accounts** (created locally or imported from Remnawave) start with **no** devices, keys or
+  peers, so they have nothing to download until a device is added.
+- **Per-user device limit** is local and `0` means unlimited. A Remnawave-imported account is judged
+  by its imported `hwid_device_limit` instead, where a null (or `0`) value also means unlimited and
+  the local column stays inert. Lowering a limit never removes an existing device - it only blocks
+  further additions once the count is reached.
+- **Deleting a device** frees its limit slot immediately, but the actual revocation on the node is
+  asynchronous: the device is tombstoned, its peers are marked `pending_delete`, and the node drops
+  them on the next sync. The device row, its peers and its traffic history are retained for
+  accounting. Deletion stays available to the owner of a blocked or expired account, unlike
+  downloads.
+- **Unblocking an account** restores the peers the block removed *and* provisions the peers a node
+  that was added while the account was blocked never got, then queues those nodes like any other
+  change. Deleting a device stays durable: no lifecycle transition resurrects a tombstoned device,
+  and an account without devices still owns nothing after a lifecycle pass.
+
+### Address recycling and the size of the pool
+
+The client address space is **finite**: a `/24` (`VPN_SUBNET`, `10.8.0.0/24` by default) yields
+roughly 250 client addresses, so a deployment has a real ceiling on how many devices can exist at
+once. Amnezia does not offer unlimited client capacity, and a larger deployment needs a wider subnet.
+
+- Only `devices.vpn_ip` reserves an address. The pre-migration per-user `users.vpn_ip` column is
+  frozen and reserves nothing: migration `0019` copied each of those addresses onto the account's
+  `Default` device, so honouring it twice would keep an address busy forever.
+- When a device is deleted, its address returns to the pool **only after every peer of that device
+  is confirmed `deleted`**. Until then it stays reserved: a node that has not answered may still hold
+  that peer, and handing the address to a new device would put two tunnels on one address.
+- The hand-back is recorded (`released_vpn_ip`, `ip_released_at`) instead of erasing the address, and
+  it never regenerates a key, deletes a peer row or touches traffic history. A new device that
+  reuses the address gets fresh key material and its own peer row; node results are matched by public
+  key, so the released device's old peer can never be applied to the new device.
+- A **live** device never releases its address, not even a blocked or expired one - blocking is not
+  deletion.
+- A device that never reached any node (no peers) releases immediately when deleted. A device deleted
+  before migration `0020` keeps its address until its removal is confirmed again: deleting it once
+  more, or deleting the node that held it, runs the release.
+- If every address is held (live devices plus removals no node has confirmed yet), adding a device
+  answers **`503`** with the reason instead of an unexplained `500`. The pool recovers as soon as the
+  unreachable node reports, or the removed peers are confirmed.
+
+### Config download readiness
+
+- A configuration, QR or AmneziaWG QR download requires that device's peer on that node to be
+  `active`; a peer that is still pending answers `503` instead of serving a config built from the
+  device credentials alone.
+- A later sync failure of a node is reported as an `error` diagnostic and does **not** remove a
+  working config: a peer the node already acknowledged stays usable while a newer sync of the same
+  node fails.
+
+### Live updates (SSE)
+
+- Each public account page may open one `text/event-stream` at `/pub/u/{id}/events`. The frames are
+  `connected` (`{user_id, notifications}`), `changed` (`{reason}`), `unauthorized` (`{reason}`) and
+  `: keepalive` comments. A frame never carries keys, configuration bodies or profile data - the
+  client re-reads `/pub/u/{token}/info`, so the stream only ever says "re-read".
+- Notifications are transactional: they are issued inside the transaction that writes the change
+  through PostgreSQL `LISTEN`/`NOTIFY`, so a client is never told to re-read state that was never
+  committed. **All backend processes must share the same PostgreSQL database**, because each process
+  runs its own `LISTEN` connection and a change committed by the process that handled a worker
+  result reaches a stream held by any other process.
+- Behind a reverse proxy, disable response buffering for the stream (the backend already sends
+  `X-Accel-Buffering: no` for nginx); a buffering proxy would hold events until its buffer fills up
+  and the page would look frozen.
+- The stream heartbeats (`: keepalive`) so intermediaries do not idle the connection out, and the
+  client keeps a periodic poll as its fallback. If the listener is unavailable, the `connected`
+  frame reports `notifications: false` and the poll is the transport.
+- Node agents stay private: live updates need **no** public access to them. The worker reports node
+  results and heartbeats to the backend, which commits the change and notifies.
+
+### Safe rollout of migrations 0019 and 0020
+
+Running old and new writers against the same database is **not** safe: the old backend does not set
+`peers.device_id` and there is no lazy backfill at runtime. Upgrade in this order:
+
+1. **Back up the database** and verify the backup can be restored.
+2. **Pause** the old backend writers and the worker's result ingestion, so nothing writes while the
+   schema changes.
+3. **Apply migration `0019`** with the backend stopped, then `0020` (address-release metadata; purely
+   additive, so it runs in the same stopped window and backfills nothing).
+4. **Deploy the new backend**, then the compatible worker, then the frontends.
+5. **Resume** the queues and confirm operations drain.
+
+Installed VPN nodes keep their existing tunnels and configurations throughout - this change is on
+the management side only, so **do not rebuild or recreate the nodes**.
+
+### Downgrade and restore
+
+- Downgrading to `0018` is refused once any device has been deleted or any non-migration device
+  exists, because the legacy per-user schema cannot express device deletion and would resurrect
+  deleted credentials.
+- Downgrading to `0019` drops only the two release-metadata columns. Live credentials, IPs and peer
+  rows are untouched, but the record of which addresses were already handed back is lost; a device
+  that released its address stays tombstoned, so a later downgrade to `0018` is still refused.
+- Restoring an older backup is lossy and manual: it silently discards every device, deletion and
+  device-scoped change made after the backup. Do it only with an explicit understanding of that loss
+  and a reconciliation plan. There is no automatic lossy rollback.
+
+---
+
 ## Security
 
 See [SECURITY.md](SECURITY.md) for supported versions and how to report vulnerabilities responsibly.

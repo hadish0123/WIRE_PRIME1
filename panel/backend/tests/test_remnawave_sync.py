@@ -6,8 +6,9 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy import BigInteger, select
 
-from app.models import LocalAmneziawgUserLifetimeTraffic, Peer, RemnawaveUser, User
+from app.models import Device, LocalAmneziawgUserLifetimeTraffic, Node, Peer, RemnawaveUser, User
 from app.routers.api_parts.common import REMNAWAVE_MANAGED_USER_CONFLICT_DETAIL
+from app.services.devices import create_device
 from app.services.remnawave_sync import reconcile_missing_remnawave_users
 
 pytestmark = pytest.mark.usefixtures('mock_sync_node_enqueue')
@@ -25,27 +26,28 @@ def _profile(**overrides):
     return data
 
 
-async def test_upsert_active_import_creates_user_peer_and_mapping(
+async def test_upsert_active_import_creates_user_without_devices(
     client: AsyncClient, db, worker_headers, seeded_node
 ):
+    """An imported profile links a local account but never invents devices, keys or peers."""
     node = seeded_node
+    assert node.id == 'node-1'
 
     resp = await client.post(
         '/internal/worker/remnawave/users/upsert', json=[_profile()], headers=worker_headers
     )
 
     assert resp.status_code == HTTPStatus.OK
-    assert resp.json()['affected_node_ids'] == [node.id]
+    # nothing to provision: the account owns no device until one is added explicitly
+    assert resp.json()['affected_node_ids'] == []
     rw_user = (await db.execute(select(RemnawaveUser))).scalar_one()
     user = await db.get(User, rw_user.user_id)
-    peers = (await db.execute(select(Peer).where(Peer.user_id == user.id))).scalars().all()
     assert user.name == 'alice'
     assert user.is_blocked is False
-    assert user.public_key
-    assert user.private_key
-    assert user.vpn_ip == '10.8.0.2'
-    assert len(peers) == 1
-    assert peers[0].status == 'pending'
+    assert user.public_key is None
+    assert user.private_key is None
+    assert user.vpn_ip is None
+    assert (await db.execute(select(Peer).where(Peer.user_id == user.id))).scalars().all() == []
     assert rw_user.sync_status == 'synced'
     assert rw_user.sync_reason is None
     assert rw_user.sync_error is None
@@ -107,6 +109,9 @@ async def test_upsert_active_profiles_overwrite_local_block_state(
     )
     rw_user = (await db.execute(select(RemnawaveUser))).scalar_one()
     user_id = rw_user.user_id
+    # the imported account has a device with a peer, as if the user had added one
+    await create_device(db, user_id, name='laptop')
+    await db.commit()
     user = await db.get(User, rw_user.user_id)
     peer = (await db.execute(select(Peer).where(Peer.user_id == user_id))).scalar_one()
 
@@ -128,6 +133,100 @@ async def test_upsert_active_profiles_overwrite_local_block_state(
     assert updated_rw_user.sync_status == 'synced'
 
 
+async def test_upsert_recovery_provisions_peers_missing_on_a_node_added_while_blocked(
+    client: AsyncClient, db, worker_headers, seeded_node
+):
+    """Bringing an imported account back must cover nodes it never had a peer on, too."""
+    node_one = seeded_node
+
+    first = await client.post(
+        '/internal/worker/remnawave/users/upsert', json=[_profile()], headers=worker_headers
+    )
+    assert first.status_code == HTTPStatus.OK
+    rw_user = (await db.execute(select(RemnawaveUser))).scalar_one()
+    device = Device(
+        id='device-rw',
+        user_id=rw_user.user_id,
+        name='laptop',
+        public_key='rw-device-public',
+        private_key='rw-device-private',
+        vpn_ip='10.8.0.7',
+    )
+    db.add(device)
+    await db.flush()
+    db.add(
+        Peer(
+            id='peer-rw-1',
+            node_id=node_one.id,
+            user_id=rw_user.user_id,
+            device_id=device.id,
+            status='active',
+            psk_key='rw-psk-1',
+        )
+    )
+    await db.commit()
+
+    blocked = await client.post(
+        '/internal/worker/remnawave/users/upsert',
+        json=[_profile(status='DISABLED')],
+        headers=worker_headers,
+    )
+    assert blocked.status_code == HTTPStatus.OK
+    assert blocked.json()['affected_node_ids'] == ['node-1']
+    peer_one = await db.get(Peer, 'peer-rw-1')
+    assert peer_one is not None
+    await db.refresh(peer_one)
+    assert peer_one.status == 'pending_delete'
+
+    node_two = Node(id='node-2', name='node-2', url='http://agent-2:8000', token='token-2')  # noqa: S106
+    db.add(node_two)
+    await db.commit()
+
+    restored = await client.post(
+        '/internal/worker/remnawave/users/upsert', json=[_profile()], headers=worker_headers
+    )
+
+    assert restored.status_code == HTTPStatus.OK
+    assert restored.json()['affected_node_ids'] == ['node-1', 'node-2']
+    await db.refresh(peer_one)
+    assert peer_one.status == 'pending'
+    node_two_peer = (await db.execute(select(Peer).where(Peer.node_id == 'node-2'))).scalar_one()
+    assert node_two_peer.device_id == device.id
+    assert node_two_peer.status == 'pending'
+    assert node_two_peer.psk_key and node_two_peer.psk_key != 'rw-psk-1'
+
+
+async def test_upsert_without_a_status_transition_reprovisions_nothing(
+    client: AsyncClient, db, worker_headers, seeded_node
+):
+    """Reconcile runs constantly: an unchanged profile must not rebuild peers on every pass."""
+    assert seeded_node.id == 'node-1'
+    await client.post(
+        '/internal/worker/remnawave/users/upsert', json=[_profile()], headers=worker_headers
+    )
+    rw_user = (await db.execute(select(RemnawaveUser))).scalar_one()
+    db.add(
+        Device(
+            id='device-rw',
+            user_id=rw_user.user_id,
+            name='laptop',
+            public_key='rw-device-public',
+            private_key='rw-device-private',
+            vpn_ip='10.8.0.7',
+        )
+    )
+    db.add(Node(id='node-2', name='node-2', url='http://agent-2:8000', token='token-2'))  # noqa: S106
+    await db.commit()
+
+    repeat = await client.post(
+        '/internal/worker/remnawave/users/upsert', json=[_profile()], headers=worker_headers
+    )
+
+    assert repeat.status_code == HTTPStatus.OK
+    assert repeat.json()['affected_node_ids'] == []
+    assert (await db.execute(select(Peer).where(Peer.node_id == 'node-2'))).scalars().all() == []
+
+
 async def test_upsert_blocks_when_combined_usage_reaches_remnawave_limit(
     client: AsyncClient, db, worker_headers, seeded_node
 ):
@@ -136,6 +235,8 @@ async def test_upsert_blocks_when_combined_usage_reaches_remnawave_limit(
         '/internal/worker/remnawave/users/upsert', json=[_profile()], headers=worker_headers
     )
     rw_user = (await db.execute(select(RemnawaveUser))).scalar_one()
+    # a device with a peer gives combined-limit enforcement something to block
+    await create_device(db, rw_user.user_id, name='laptop')
     db.add(
         LocalAmneziawgUserLifetimeTraffic(
             user_id=rw_user.user_id,
@@ -255,6 +356,9 @@ async def test_remote_delete_waits_for_peer_removal_before_purge(
     )
     rw_user = (await db.execute(select(RemnawaveUser))).scalar_one()
     user_id = rw_user.user_id
+    # the purge waits for the peer of the account's device to disappear from the node
+    await create_device(db, user_id, name='laptop')
+    await db.commit()
 
     deleted = await client.post(
         f'/internal/worker/remnawave/users/{rw_user.remnawave_uuid}/deleted', headers=worker_headers
@@ -288,6 +392,14 @@ async def test_missing_remote_users_become_stale_without_delete(
         json=[_profile(uuid='missing-uuid', username='missing'), _profile()],
         headers=worker_headers,
     )
+    missing_user_id = (
+        (await db.execute(select(RemnawaveUser).where(RemnawaveUser.username == 'missing')))
+        .scalar_one()
+        .user_id
+    )
+    # the stale user only has peers to retire because it owns a device
+    await create_device(db, missing_user_id, name='laptop')
+    await db.commit()
     remote_uuid = (
         (await db.execute(select(RemnawaveUser).where(RemnawaveUser.username == 'alice')))
         .scalar_one()
@@ -331,10 +443,18 @@ async def test_local_block_unblock_delete_reject_remnawave_managed_user(
     assert delete.json()['detail'] == REMNAWAVE_MANAGED_USER_CONFLICT_DETAIL
 
 
-async def test_standalone_local_users_remain_editable(client: AsyncClient, auth_headers):
+async def test_standalone_local_users_remain_editable(client: AsyncClient, auth_headers, db):
+    """Local accounts are not Remnawave-managed, so admin lifecycle edits still apply.
+
+    The delete route still keys on the retained legacy columns in this slice; device-aware user
+    deletion is next-phase work (see handoff notes).
+    """
     created = await client.post('/api/users', json={'name': 'local-only'}, headers=auth_headers)
     assert created.status_code == HTTPStatus.CREATED
     user_id = created.json()['id']
+    user = await db.get(User, user_id)
+    user.public_key = 'local-only-public'
+    await db.commit()
 
     block = await client.put(f'/api/users/{user_id}/block', headers=auth_headers)
     unblock = await client.put(f'/api/users/{user_id}/unblock', headers=auth_headers)

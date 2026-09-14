@@ -6,6 +6,7 @@ from sqlalchemy.orm import selectinload
 
 from app.models import LocalAmneziawgUserLifetimeTraffic, Peer, RemnawaveUser, User
 from app.schemas.worker import RemnawaveUserIn
+from app.services.devices import restore_missing_peers_for_user, tombstoned_device_ids
 from app.services.operations import enqueue_operation, new_operation
 
 
@@ -86,21 +87,38 @@ def apply_remnawave_profile(row: RemnawaveUser, data: RemnawaveUserIn) -> None:
     row.delete_requested_at = None
 
 
-def apply_remnawave_lifecycle(row: RemnawaveUser, data: RemnawaveUserIn) -> set[str]:
+async def apply_remnawave_lifecycle(
+    db: AsyncSession, row: RemnawaveUser, data: RemnawaveUserIn
+) -> set[str]:
+    """Apply the imported profile's block state; only a transition provisions.
+
+    An unchanged status returns immediately - reconcile must not rebuild peers on every pass.
+    A blocked -> active transition restores the peers blocking removed *and* provisions the ones
+    a node added while the account was blocked never got. ``was_blocked`` is read before this
+    function overwrites ``is_blocked``.
+    """
     affected_node_ids: set[str] = set()
+    was_blocked = row.user.is_blocked
     should_block = remnawave_blocked(data)
-    if row.user.is_blocked == should_block:
+    if was_blocked == should_block:
         return affected_node_ids
 
     row.user.is_blocked = should_block
+    tombstoned_devices = await tombstoned_device_ids(
+        db, (peer.device_id for peer in row.user.peers)
+    )
     for peer in row.user.peers:
         if should_block:
             if peer.status != 'pending_delete':
                 peer.status = 'pending_delete'
                 affected_node_ids.add(peer.node_id)
-        elif peer.status in {'pending_delete', 'deleted'}:
-            peer.status = 'pending'
-            affected_node_ids.add(peer.node_id)
+        else:
+            tombstoned_peer = peer.status in {'pending_delete', 'deleted'}
+            if tombstoned_peer and peer.device_id not in tombstoned_devices:
+                peer.status = 'pending'
+                affected_node_ids.add(peer.node_id)
+    if was_blocked and not should_block:
+        affected_node_ids |= await restore_missing_peers_for_user(db, row.user_id)
     return affected_node_ids
 
 
