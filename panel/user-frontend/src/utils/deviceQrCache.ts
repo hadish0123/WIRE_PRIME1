@@ -15,7 +15,9 @@
 import { nodeCacheKey } from './deviceUrls.ts'
 
 export type QrLoadState =
-  { kind: 'loading' } | { kind: 'chunks'; chunks: string[]; idx: number } | { kind: 'error' }
+  | { kind: 'loading' }
+  | { kind: 'chunks'; chunks: string[]; idx: number }
+  | { kind: 'error' }
 
 export interface DeviceQrCacheEntry {
   state: QrLoadState

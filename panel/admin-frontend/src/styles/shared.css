@@ -112,7 +112,7 @@
 }
 
 .settings-card::before {
-  content: '';
+  content: "";
   position: absolute;
   inset: 0 auto 0 0;
   width: 3px;
@@ -277,7 +277,7 @@
 }
 
 code {
-  font-family: 'Menlo', 'Consolas', monospace;
+  font-family: "Menlo", "Consolas", monospace;
   font-size: 0.82em;
   color: var(--app-code-text);
   background: var(--app-code-bg);

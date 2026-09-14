@@ -111,7 +111,13 @@ export const EMPTY_QR_ITEM: QrMapItem = {
 }
 
 export type PublicApiErrorKind =
-  'not_found' | 'blocked' | 'conflict' | 'validation' | 'network' | 'server' | 'unknown'
+  | 'not_found'
+  | 'blocked'
+  | 'conflict'
+  | 'validation'
+  | 'network'
+  | 'server'
+  | 'unknown'
 
 /** i18n key describing a failure; the raw server text is never part of it. */
 export function apiErrorKey(kind: PublicApiErrorKind): string {

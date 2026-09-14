@@ -28,7 +28,7 @@
   --skeleton-shine: #f1f5f9;
 }
 
-:root[data-theme='dark'] {
+:root[data-theme="dark"] {
   --bg: #0f172a;
   --card: #1e293b;
   --border: #334155;
@@ -47,7 +47,7 @@
   --skeleton-shine: #475569;
 }
 
-:root[data-theme='light'] {
+:root[data-theme="light"] {
   --bg: #f1f5f9;
   --card: #ffffff;
   --border: #e2e8f0;
