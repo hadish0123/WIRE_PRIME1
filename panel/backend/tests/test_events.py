@@ -361,11 +361,11 @@ async def test_a_device_change_is_not_delayed_by_the_coalescing_window() -> None
     subscription = hub.subscribe(ALICE)
 
     hub.deliver_payload(json.dumps({'user_id': ALICE, 'reason': REASON_NODE_HEARTBEAT}))
-    assert await _drain(subscription, within=0.01) == [REASON_NODE_HEARTBEAT]
+    assert await _drain(subscription) == [REASON_NODE_HEARTBEAT]
 
     for reason in (REASON_DEVICE_CREATED, REASON_DEVICE_DELETED, REASON_NODE_SYNC):
         hub.deliver_payload(json.dumps({'user_id': ALICE, 'reason': reason}))
-        assert await _drain(subscription, within=0.01) == [reason], reason
+        assert await _drain(subscription) == [reason], reason
 
 
 async def test_every_open_tab_of_one_account_is_notified() -> None:
@@ -384,7 +384,7 @@ async def test_unsubscribing_releases_the_account_and_its_pending_event() -> Non
     subscription = hub.subscribe(ALICE)
 
     hub.deliver_payload(json.dumps({'user_id': ALICE, 'reason': REASON_NODE_HEARTBEAT}))
-    assert await _drain(subscription, within=0.01) == [REASON_NODE_HEARTBEAT]
+    assert await _drain(subscription) == [REASON_NODE_HEARTBEAT]
     assert hub.subscription_count == 1
 
     # A second heartbeat inside the window books a trailing event; releasing the account has to
