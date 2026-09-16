@@ -1,13 +1,28 @@
 import base64
+import logging
 import os
 import subprocess
 from http import HTTPStatus
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 from fastapi.testclient import TestClient
 
 import agent
+
+
+def test_configure_agent_logger_emits_info_to_stderr(capsys: pytest.CaptureFixture[str]) -> None:
+    logger = logging.getLogger('agent.test-logging')
+    logger.handlers.clear()
+    try:
+        agent._configure_agent_logger(logger)
+
+        logger.info('diagnostic message')
+
+        assert 'INFO diagnostic message' in capsys.readouterr().err
+    finally:
+        logger.handlers.clear()
 
 
 def _sample_show_output():
@@ -332,7 +347,7 @@ def test_configure_interface_preserves_peers(client: TestClient, auth_headers: d
 
 
 def test_configure_interface_noop_skips_write_and_live_apply(
-    client: TestClient, auth_headers: dict
+    client: TestClient, auth_headers: dict, caplog: pytest.LogCaptureFixture
 ):
     cfg_path = os.environ['WG_CONFIG']
     existing = (
@@ -358,7 +373,10 @@ def test_configure_interface_noop_skips_write_and_live_apply(
     )
     Path(cfg_path).write_text(existing)
 
-    with patch.object(subprocess, 'run') as mock_run:
+    with (
+        patch.object(subprocess, 'run') as mock_run,
+        caplog.at_level(logging.INFO, logger='agent'),
+    ):
         resp = client.put(
             '/interface',
             json={
@@ -373,6 +391,7 @@ def test_configure_interface_noop_skips_write_and_live_apply(
     assert resp.json() == {'status': 'configured'}
     assert Path(cfg_path).read_text() == existing
     mock_run.assert_not_called()
+    assert 'AWG interface configuration unchanged; skipped live apply' in caplog.messages
 
 
 def test_configure_interface_live_awg_failure_is_ignored(client: TestClient, auth_headers: dict):

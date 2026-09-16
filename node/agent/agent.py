@@ -6,7 +6,8 @@ import os
 import re
 import subprocess
 import tempfile
-from contextlib import contextmanager, suppress
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from http import HTTPStatus
 from pathlib import Path
@@ -32,8 +33,18 @@ from mtproxy import (
     supervisor_mtproxy,
 )
 
-app = FastAPI(title='AmneziaWG Node Agent')
+
+def _configure_agent_logger(logger: logging.Logger) -> None:
+    logger.setLevel(logging.INFO)
+    if logger.handlers:
+        return
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter('%(levelname)s %(message)s'))
+    logger.addHandler(handler)
+
+
 log = logging.getLogger(__name__)
+_configure_agent_logger(log)
 
 INTERFACE = os.environ.get('WG_INTERFACE', 'awg0')
 _WGQUICK_ONLY = re.compile(
@@ -47,6 +58,15 @@ MTPROXY_CONFIG_PATH = Path(os.environ.get('MTPROXY_CONFIG', str(DEFAULT_MTPROXY_
 PUBKEY_LEN = 32
 AWG_DUMP_PART_COUNT = 8
 SUPERVISOR_ACTIONS: Final = frozenset({'start', 'stop', 'restart', 'status'})
+
+
+@asynccontextmanager
+async def _agent_lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    _start_mtproxy_from_existing_config()
+    yield
+
+
+app = FastAPI(title='AmneziaWG Node Agent', lifespan=_agent_lifespan)
 
 _bearer = HTTPBearer()
 
@@ -136,6 +156,16 @@ def _mtproxy_status() -> MTProxyStatus:
 
 def _mtproxy_http_error(exc: SupervisorCommandError | SupervisorTimeoutError) -> HTTPException:
     return HTTPException(status_code=HTTPStatus.INTERNAL_SERVER_ERROR, detail=str(exc))
+
+
+def _start_mtproxy_from_existing_config() -> None:
+    if not MTPROXY_CONFIG_PATH.is_file():
+        return
+    try:
+        supervisor_mtproxy('start')
+        log.info('Started MTProxy from existing config')
+    except SupervisorCommandError, SupervisorTimeoutError:
+        log.exception('Failed to start MTProxy from existing config')
 
 
 # ── awg helpers ───────────────────────────────────────────────────────────────
@@ -583,14 +613,18 @@ def configure_interface(cfg: InterfaceConfig, _: Auth):
 
         desired = interface_block + peer_tail
         if existing == desired:
+            log.info('AWG interface configuration unchanged; skipped live apply')
             return {'status': 'configured'}
 
         with Path(WG_CONFIG).open('w') as f:
             f.write(desired)
 
-    # Apply live; silently ignore if interface is not up yet (entrypoint handles bring-up).
-    with suppress(subprocess.CalledProcessError):
+    log.info('AWG interface configuration changed; applying live update')
+    # The tunnel entrypoint applies the saved config once it has brought the interface up.
+    try:
         _apply_live_interface(cfg, existing_interface)
+    except subprocess.CalledProcessError:
+        log.warning('AWG interface live update failed; saved config will apply on tunnel start')
 
     return {'status': 'configured'}
 

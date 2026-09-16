@@ -97,6 +97,36 @@ def test_mtproxy_default_config_path_uses_existing_node_config_mount() -> None:
     assert Path('/etc/amnezia/amneziawg/mtproxy/config.json') == DEFAULT_CONFIG_PATH
 
 
+def test_supervisor_does_not_start_mtproxy_without_a_config() -> None:
+    config = (Path(__file__).parents[2] / 'supervisord.conf').read_text()
+    mtproxy_program = config.split('[program:mtproxy]', maxsplit=1)[1]
+
+    assert 'autostart=false' in mtproxy_program
+    assert 'autorestart=false' in mtproxy_program
+
+
+def test_agent_startup_starts_mtproxy_when_a_config_exists(
+    mtproxy_config_path: Path,
+) -> None:
+    apply_mtproxy_config(MTProxyConfig.model_validate(_payload()), config_path=mtproxy_config_path)
+
+    with patch.object(agent, 'supervisor_mtproxy') as supervisor, TestClient(agent.app):
+        pass
+
+    supervisor.assert_called_once_with('start')
+
+
+def test_agent_startup_does_not_touch_mtproxy_without_a_config(
+    mtproxy_config_path: Path,
+) -> None:
+    assert not mtproxy_config_path.exists()
+
+    with patch.object(agent, 'supervisor_mtproxy') as supervisor, TestClient(agent.app):
+        pass
+
+    supervisor.assert_not_called()
+
+
 def test_mtproxy_config_rejects_invalid_port() -> None:
     with pytest.raises(ValidationError):
         MTProxyConfig(port=70000, public_host='proxy.example.com', secret=RAW_SECRET)
