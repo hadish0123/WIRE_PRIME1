@@ -288,7 +288,7 @@ class _Fanout:
     """Everything one user has open in this process, plus its shared coalescing state."""
 
     subscriptions: list[UserEventSubscription] = field(default_factory=list)
-    last_delivered_at: float = 0.0
+    last_delivered_at: float | None = None
     trailing: asyncio.TimerHandle | None = None
 
 
@@ -427,8 +427,8 @@ class UserEventHub:
         if loop is None:
             return
         now = loop.time()
-        elapsed = now - fanout.last_delivered_at
-        if reason not in COALESCED_REASONS or elapsed >= self._coalesce_seconds:
+        elapsed = None if fanout.last_delivered_at is None else now - fanout.last_delivered_at
+        if reason not in COALESCED_REASONS or elapsed is None or elapsed >= self._coalesce_seconds:
             self._deliver(fanout, reason, loop)
             return
         # Inside the coalescing window: one trailing delivery is enough, because the client re-reads

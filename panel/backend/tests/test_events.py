@@ -24,7 +24,7 @@ import json
 from collections.abc import AsyncGenerator
 from http import HTTPStatus
 from typing import Any, cast
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from fastapi import HTTPException
@@ -353,6 +353,19 @@ async def test_a_change_outside_the_window_is_delivered_on_its_own() -> None:
     hub.deliver_payload(json.dumps({'user_id': ALICE, 'reason': REASON_NODE_SYNC}))
 
     assert await _drain(subscription) == [REASON_NODE_SYNC]
+
+
+async def test_the_first_heartbeat_is_not_coalesced_when_the_loop_clock_starts_at_zero() -> None:
+    hub = UserEventHub(None, coalesce_seconds=60.0)
+    subscription = hub.subscribe(ALICE)
+    loop = Mock()
+    loop.time.return_value = 0.0
+    hub._loop = loop
+
+    hub.deliver_payload(json.dumps({'user_id': ALICE, 'reason': REASON_NODE_HEARTBEAT}))
+
+    assert await _drain(subscription) == [REASON_NODE_HEARTBEAT]
+    loop.call_later.assert_not_called()
 
 
 async def test_a_device_change_is_not_delayed_by_the_coalescing_window() -> None:
