@@ -14,7 +14,7 @@ def list_nodes(admin:Admin=Depends(current_admin),db:Session=Depends(get_db)):
 @router.post("",response_model=NodeOut)
 def create_node(data:NodeIn,request:Request,admin:Admin=Depends(current_admin),db:Session=Depends(get_db)):
  if not admin.tenant_id:raise HTTPException(400,"Tenant required")
- n=Node(tenant_id=admin.tenant_id,name=data.name,address=data.address);db.add(n);record(db,admin,request,"node.create","node",n.id);db.commit();db.refresh(n);return n
+ n=Node(tenant_id=admin.tenant_id,name=data.name,address=data.address,agent_url=data.agent_url);db.add(n);record(db,admin,request,"node.create","node",n.id);db.commit();db.refresh(n);return n
 @router.post("/{node_id}/provision")
 def provision(node_id:str,request:Request,admin:Admin=Depends(current_admin),db:Session=Depends(get_db)):
  n=db.query(Node).filter(Node.id==node_id,Node.tenant_id==admin.tenant_id).first()
