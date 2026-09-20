@@ -3,7 +3,7 @@ from fastapi.security import HTTPBearer,HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from .db import get_db,set_platform_context,set_tenant_context
 from .security import decode_access_token
-from .models import Admin,RoleName
+from .models import Admin,RoleName,Client,AdminInboundScope
 
 bearer=HTTPBearer(auto_error=False)
 
@@ -69,3 +69,23 @@ def require_platform(admin:Admin=Depends(current_admin)):
     if admin.role!=RoleName.platform_owner:
         raise HTTPException(403,"Platform permission required")
     return admin
+
+
+def can_access_client(db:Session,admin:Admin,client:Client)->bool:
+    if not client:
+        return False
+    if admin.role==RoleName.platform_owner:
+        return True
+    if client.tenant_id!=admin.tenant_id:
+        return False
+    if admin.role==RoleName.representative:
+        return client.created_by_admin_id==admin.id
+    return True
+
+def representative_can_use_inbound(db:Session,admin:Admin,inbound_id:str)->bool:
+    if admin.role!=RoleName.representative:
+        return True
+    return db.query(AdminInboundScope).filter(
+        AdminInboundScope.admin_id==admin.id,
+        AdminInboundScope.inbound_id==inbound_id
+    ).first() is not None
