@@ -1,15 +1,15 @@
-# Amnezia
+# PRIMEVPN
 
 [![Build](https://github.com/vpn-panel-dev/vpn-management-panel/actions/workflows/docker.yml/badge.svg)](https://github.com/vpn-panel-dev/vpn-management-panel/actions/workflows/docker.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Self-hosted VPN management system built on [AmneziaWG](https://github.com/amnezia-vpn/amneziawg-go) — a WireGuard fork with obfuscation.
+Self-hosted PRIMEVPN control plane for multi-node WireGuard/AmneziaWG and OpenVPN deployments.
 
 ## Architecture
 
 ```
                     ┌──────────────────────────┐
-                    │     Management Server    │
+                    │     PRIMEVPN Control Plane    │
                     │                          │
   Browser ───────── │  Nginx (admin + user UI) │
                     │  FastAPI (panel API)     │
@@ -19,9 +19,9 @@ Self-hosted VPN management system built on [AmneziaWG](https://github.com/amnezi
                     └──────────┬───────────────┘
                                │ HTTP / agent API
                     ┌──────────▼───────────────┐
-                    │        VPN Node          │
+                    │        PRIMEVPN VPN Node          │
                     │                          │
-  Clients ──UDP──── │  AmneziaWG (:51820/udp)  │
+  Clients ──UDP──── │  WireGuard/AmneziaWG (:51820/udp) + OpenVPN (:1194/udp)  │
                     │  Node Agent (:8000)      │
                     └──────────────────────────┘
 ```
@@ -40,15 +40,15 @@ Pre-built images are published to GitHub Container Registry on every push to `ma
 
 | Image | Description |
 |---|---|
-| `ghcr.io/vpn-panel-dev/amnezia-node` | AmneziaWG userspace tunnel + FastAPI agent + Telegram MTProxy runtime |
-| `ghcr.io/vpn-panel-dev/amnezia-panel` | FastAPI management backend |
-| `ghcr.io/vpn-panel-dev/amnezia-panel-worker` | Background worker for panel jobs |
-| `ghcr.io/vpn-panel-dev/amnezia-panel-frontend` | Vue 3 admin SPA served by Nginx |
-| `ghcr.io/vpn-panel-dev/amnezia-user-frontend` | Vue 3 user self-service page (served at `/u/<token>`) |
+| `ghcr.io/hadish0123/primevpn-node` | AmneziaWG userspace tunnel + FastAPI agent + Telegram MTProxy runtime |
+| `ghcr.io/hadish0123/primevpn-panel` | FastAPI management backend |
+| `ghcr.io/hadish0123/primevpn-panel-worker` | Background worker for panel jobs |
+| `ghcr.io/hadish0123/primevpn-panel-frontend` | Vue 3 admin SPA served by Nginx |
+| `ghcr.io/hadish0123/primevpn-user-frontend` | Vue 3 user self-service page (served at `/u/<token>`) |
 
 ---
 
-## Deploy: VPN Node
+## Deploy: PRIMEVPN VPN Node
 
 Run on each **VPN node server**. Repeat for every node.
 
@@ -63,7 +63,7 @@ Run on each **VPN node server**. Repeat for every node.
 ### 1. Create working directory
 
 ```bash
-mkdir -p /opt/amnezia-node/config && cd /opt/amnezia-node
+mkdir -p /opt/primevpn-node/config && cd /opt/primevpn-node
 ```
 
 ### 2. Create `docker-compose.yml`
@@ -72,7 +72,7 @@ mkdir -p /opt/amnezia-node/config && cd /opt/amnezia-node
 cat > docker-compose.yml << 'EOF'
 services:
   node:
-    image: ghcr.io/vpn-panel-dev/amnezia-node:latest
+    image: ghcr.io/hadish0123/primevpn-node:latest
     restart: unless-stopped
     cap_add:
       - NET_ADMIN
@@ -152,7 +152,7 @@ Run on the **management server**.
 ### 1. Create working directory
 
 ```bash
-mkdir -p /opt/amnezia-panel && cd /opt/amnezia-panel
+mkdir -p /opt/primevpn-panel && cd /opt/primevpn-panel
 ```
 
 ### 2. Create `docker-compose.yml`
@@ -161,7 +161,7 @@ mkdir -p /opt/amnezia-panel && cd /opt/amnezia-panel
 cat > docker-compose.yml << 'EOF'
 services:
   frontend:
-    image: ghcr.io/vpn-panel-dev/amnezia-panel-frontend:latest
+    image: ghcr.io/hadish0123/primevpn-panel-frontend:latest
     restart: unless-stopped
     ports:
       - "80:80"
@@ -170,7 +170,7 @@ services:
       - user-frontend
 
   user-frontend:
-    image: ghcr.io/vpn-panel-dev/amnezia-user-frontend:latest
+    image: ghcr.io/hadish0123/primevpn-user-frontend:latest
     restart: unless-stopped
     depends_on:
       - panel
@@ -187,7 +187,7 @@ services:
       retries: 10
 
   panel:
-    image: ghcr.io/vpn-panel-dev/amnezia-panel:latest
+    image: ghcr.io/hadish0123/primevpn-panel:latest
     restart: unless-stopped
     environment:
       - DATABASE_URL=postgresql+asyncpg://amnezia:${DB_PASSWORD}@db:5432/amnezia
@@ -209,7 +209,7 @@ services:
       retries: 10
 
   panel-worker:
-    image: ghcr.io/vpn-panel-dev/amnezia-panel-worker:latest
+    image: ghcr.io/hadish0123/primevpn-panel-worker:latest
     restart: unless-stopped
     environment:
       - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
@@ -271,7 +271,7 @@ The panel is now accessible at `http://<panel-server-ip>`.
 ### 5. View credentials
 
 ```bash
-cat /opt/amnezia-panel/.env
+cat /opt/primevpn-panel/.env
 ```
 
 Login: `admin` / value of `ADMIN_PASSWORD`.
@@ -284,7 +284,7 @@ Login: `admin` / value of `ADMIN_PASSWORD`.
 2. Go to **Nodes → Add node**.
 3. On each node server, read its config:
    ```bash
-   cat /opt/amnezia-node/.env
+   cat /opt/primevpn-node/.env
    ```
 4. Fill in:
    - **Name** — friendly label for this node
@@ -311,9 +311,9 @@ Amnezia can sync users from [Remnawave](https://remnawave.com) via API polling o
 
 - Remnawave is the source of truth. Changes flow one-way from Remnawave to Amnezia.
 - Remnawave-managed users are not automatically linked to existing local users.
-- Imported Remnawave usage is the traffic value read from Remnawave during sync. Local AmneziaWG usage is measured from node peer counters (`rx + tx`) and stored reset-safely by Amnezia.
+- Imported Remnawave usage is the traffic value read from Remnawave during sync. Local WireGuard/AmneziaWG usage is measured from node peer counters (`rx + tx`) and stored reset-safely by Amnezia.
 - For local Amnezia display and enforcement, Remnawave-managed users use combined usage: imported Remnawave traffic used plus local AmneziaWG lifetime usage.
-- Local and combined AmneziaWG usage are not pushed back to Remnawave traffic counters.
+- Local and combined WireGuard/AmneziaWG usage are not pushed back to Remnawave traffic counters.
 - If combined usage reaches the Remnawave-imported traffic limit, Amnezia blocks the user's local peers, queues node sync, and asks Remnawave to disable the user through its lifecycle API when the integration is enabled. This does not mutate Remnawave traffic counters.
 - Remnawave polling can be enabled in settings. The backend stores `polling_interval_seconds` with a default of 300 seconds; the worker checks whether polling is due once per minute.
 - Without the same `REMNAWAVE_SECRET_KEY`, stored Remnawave secrets and subscription URLs cannot be decrypted after a backup restore.
@@ -343,7 +343,7 @@ Amnezia can sync users from [Remnawave](https://remnawave.com) via API polling o
 
 ## Multi-device accounts
 
-An Amnezia account (the "user") owns its lifecycle, limits and traffic aggregates; each **device**
+An PRIMEVPN account (the "user") owns its lifecycle, limits and traffic aggregates; each **device**
 owns its own keypair, VPN IP and peers. One account may hold several devices on the same node, so a
 peer is identified by its `(device, node)` pair - never by the owner or the node alone.
 
@@ -370,7 +370,7 @@ peer is identified by its `(device, node)` pair - never by the owner or the node
 
 The client address space is **finite**: a `/24` (`VPN_SUBNET`, `10.8.0.0/24` by default) yields
 roughly 250 client addresses, so a deployment has a real ceiling on how many devices can exist at
-once. Amnezia does not offer unlimited client capacity, and a larger deployment needs a wider subnet.
+once. PRIMEVPN does not offer unlimited client capacity, and a larger deployment needs a wider subnet.
 
 - Only `devices.vpn_ip` reserves an address. The pre-migration per-user `users.vpn_ip` column is
   frozen and reserves nothing: migration `0019` copied each of those addresses onto the account's
@@ -461,8 +461,8 @@ See [SECURITY.md](SECURITY.md) for supported versions and how to report vulnerab
 Pull the latest images and recreate containers:
 
 ```bash
-cd /opt/amnezia-node  && docker compose pull && docker compose up -d
-cd /opt/amnezia-panel && docker compose pull && docker compose up -d
+cd /opt/primevpn-node  && docker compose pull && docker compose up -d
+cd /opt/primevpn-panel && docker compose pull && docker compose up -d
 ```
 
 For Telegram MTProxy changes, update the panel worker first, then the panel, then the node. That keeps config writes and the node runtime in sync when you rotate the shared secret or change the public port.
