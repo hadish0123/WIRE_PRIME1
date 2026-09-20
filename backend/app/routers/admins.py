@@ -59,7 +59,7 @@ def available_inbounds(admin:Admin=Depends(require_permission("admins:manage")),
 @router.post("")
 def create_admin(body:dict,request:Request,admin:Admin=Depends(require_permission("admins:manage")),db:Session=Depends(get_db)):
  role=body.get("role",RoleName.tenant_operator.value)
- allowed={RoleName.tenant_manager.value,RoleName.tenant_operator.value,RoleName.representative.value}
+ allowed={RoleName.tenant_operator.value,RoleName.representative.value}
  if role not in allowed: raise HTTPException(422,"Invalid role")
  tenant_id=body.get("tenant_id") if admin.role==RoleName.platform_owner else admin.tenant_id
  if not tenant_id or not db.query(Tenant).filter(Tenant.id==tenant_id,Tenant.enabled==True).first():raise HTTPException(404,"Tenant not found")
@@ -108,7 +108,7 @@ def update_admin(admin_id:str,body:dict,request:Request,admin:Admin=Depends(requ
  if target.id==admin.id and body.get("enabled") is False:raise HTTPException(422,"You cannot disable your own account")
  role=body.get("role")
  if role is not None:
-  if role not in {x.value for x in (RoleName.tenant_manager,RoleName.tenant_operator,RoleName.representative)}:raise HTTPException(422,"Invalid role")
+  if role not in {RoleName.tenant_operator.value,RoleName.representative.value}:raise HTTPException(422,"Invalid role")
   target.role=RoleName(role)
  scope_ids=body.get("inbound_ids")
  if scope_ids is not None:
