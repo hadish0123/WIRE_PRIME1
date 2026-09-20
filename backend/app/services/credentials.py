@@ -1,4 +1,4 @@
-import base64,hashlib
+import base64,hashlib,secrets
 from datetime import datetime,timezone,timedelta
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes,serialization
@@ -25,3 +25,10 @@ def _signed_cert(ca_pem,ca_key_pem,common_name,server):
  cert=builder.sign(ca_key,hashes.SHA256())
  return cert.public_bytes(Encoding.PEM).decode(),key.private_bytes(Encoding.PEM,PrivateFormat.PKCS8,NoEncryption()).decode()
 def fingerprint(value):return hashlib.sha256(value.encode()).hexdigest()
+
+def openvpn_tls_crypt_key():
+    raw=secrets.token_bytes(256)
+    lines=["-----BEGIN OpenVPN Static key V1-----"]
+    for i in range(0,len(raw),16): lines.append(raw[i:i+16].hex())
+    lines.append("-----END OpenVPN Static key V1-----")
+    return "\n".join(lines)+"\n"
