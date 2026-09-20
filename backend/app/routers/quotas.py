@@ -3,7 +3,7 @@ from fastapi import APIRouter,Depends,HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from ..db import get_db
-from ..deps import current_admin,require_tenant_manager
+from ..deps import current_admin,require_tenant_manager,require_permission
 from ..models import Admin,Client,Quota,TrafficUsage,TrafficSnapshot
 
 router=APIRouter()
@@ -32,7 +32,7 @@ def _state(q,total,daily,monthly,now):
     return "NORMAL"
 
 @router.get("/overview/all")
-def quota_overview(admin:Admin=Depends(current_admin),db:Session=Depends(get_db)):
+def quota_overview(admin:Admin=Depends(require_permission("quota:read")),db:Session=Depends(get_db)):
     now=datetime.now(timezone.utc);items=[]
     for q in db.query(Quota).filter(Quota.tenant_id==admin.tenant_id).all():
         c=db.query(Client).filter(Client.id==q.client_id,Client.tenant_id==admin.tenant_id).first()
