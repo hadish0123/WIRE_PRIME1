@@ -2,7 +2,7 @@ import json,ipaddress
 from fastapi import APIRouter,Depends,HTTPException
 from sqlalchemy.orm import Session
 from ..db import get_db
-from ..deps import current_admin
+from ..deps import current_admin,require_tenant_manager
 from ..models import Admin,Client,Device,Inbound,InboundOpenVPN,InboundWireGuard,ClientCredential,Protocol,Node
 from ..security import encrypt_secret,decrypt_secret
 from ..services.credentials import wg_keypair,openvpn_ca,openvpn_server,openvpn_client,openvpn_tls_crypt_key,fingerprint
@@ -24,7 +24,7 @@ def allocate_device_address(db,client):
  raise HTTPException(409,"No free device address remains")
 
 @router.post("/{client_id}/credentials")
-def issue(client_id:str,admin:Admin=Depends(current_admin),db:Session=Depends(get_db)):
+def issue(client_id:str,admin:Admin=Depends(require_tenant_manager),db:Session=Depends(get_db)):
  c=db.query(Client).filter(Client.id==client_id,Client.tenant_id==admin.tenant_id).first()
  if not c:raise HTTPException(404,"Client not found")
  inbound=db.query(Inbound).filter(Inbound.id==c.inbound_id,Inbound.tenant_id==admin.tenant_id).first()
