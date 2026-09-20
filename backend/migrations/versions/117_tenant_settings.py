@@ -1,7 +1,7 @@
 from alembic import op
 import sqlalchemy as sa
-revision="117_tenant_settings"
-down_revision="116_representative_rbac"
+revision="118_tenant_settings"
+down_revision="117_admin_quotas"
 branch_labels=None
 depends_on=None
 
