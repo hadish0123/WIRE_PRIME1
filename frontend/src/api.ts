@@ -27,6 +27,8 @@ export const inbounds={
 export const clients={
  list:()=>api<any[]>("/clients"),
  create:(body:unknown)=>api<any>("/clients",{method:"POST",body:JSON.stringify(body)}),
+ update:(id:string,body:unknown)=>api<any>("/clients/"+id,{method:"PATCH",body:JSON.stringify(body)}),
+ devices:(id:string)=>api<any[]>("/clients/"+id+"/devices"),
  revoke:(id:string)=>api<any>("/clients/"+id+"/revoke",{method:"POST"}),
  credential:(id:string)=>api<any>("/credentials/"+id+"/credentials",{method:"POST"})
 };
