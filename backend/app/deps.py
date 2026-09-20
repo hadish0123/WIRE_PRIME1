@@ -12,6 +12,14 @@ def current_admin(request:Request,creds:HTTPAuthorizationCredentials|None=Depend
  if not creds: raise HTTPException(401,"Authentication required")
  try: p=decode_access_token(creds.credentials)
  except Exception: raise HTTPException(401,"Invalid or expired token")
+ if p.get("role")==RoleName.platform_owner.value:
+  db.execute(text("select set_config('app.is_platform','true',false)"))
+  db.execute(text("select set_config('app.tenant_id','',false)"))
+ elif p.get("tenant_id"):
+  db.execute(text("select set_config('app.is_platform','false',false)"))
+  db.execute(text("select set_config('app.tenant_id',:tenant,false)"),{"tenant":str(p["tenant_id"])})
+ else:
+  raise HTTPException(401,"Invalid tenant context")
  a=db.get(Admin,p["sub"])
  if not a or not a.enabled: raise HTTPException(401,"Account disabled")
  request.state.tenant_id=a.tenant_id;request.state.admin_id=a.id
