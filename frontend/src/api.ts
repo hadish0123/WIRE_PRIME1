@@ -43,7 +43,7 @@ export const audit={list:()=>api<any[]>("/audit")};
 export const admins={
  list:()=>api<any[]>("/admins"),
  permissions:()=>api<any>("/admins/permissions"),
- inbounds:()=>api<any[]>("/admins/inbounds"),
+ inbounds:()=>api<any[]>("/admins/inbounds"),myInbounds:()=>api<any[]>("/admins/my-inbounds"),
  create:(body:unknown)=>api<any>("/admins",{method:"POST",body:JSON.stringify(body)}),
  update:(id:string,body:unknown)=>api<any>("/admins/"+id,{method:"PATCH",body:JSON.stringify(body)}),
  disable:(id:string)=>api<any>("/admins/"+id,{method:"DELETE"})
