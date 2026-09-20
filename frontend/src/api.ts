@@ -29,6 +29,7 @@ export const clients={
  revoke:(id:string)=>api<any>("/clients/"+id+"/revoke",{method:"POST"}),
  credential:(id:string)=>api<any>("/credentials/"+id+"/credentials",{method:"POST"})
 };
+export const configs={download:(id:string)=>api<any>("/configs/"+id)};
 export const traffic={summary:()=>api<any>("/traffic/summary")};
 export const quotas={
  state:(id:string)=>api<any>("/quotas/"+id+"/state"),
