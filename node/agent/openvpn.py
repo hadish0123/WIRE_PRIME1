@@ -77,7 +77,7 @@ def _parse_status_usage() -> dict[str, int]:
             parts = line.split(',')
             if len(parts) >= 6:
                 try:
-                    usage[parts[1]] = int(parts[4]) + int(parts[5])
+                    usage[parts[1]] = int(parts[5]) + int(parts[6])
                 except ValueError:
                     pass
     except OSError:
