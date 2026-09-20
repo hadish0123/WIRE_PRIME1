@@ -22,7 +22,7 @@ export const nodes={
 export const inbounds={
  list:()=>api<any[]>("/inbounds"),
  create:(body:unknown)=>api<any>("/inbounds",{method:"POST",body:JSON.stringify(body)}),
- update:(id:string,body:unknown)=>api<any>("/inbounds/"+id,{method:"PATCH",body:JSON.stringify(body)})
+ update:(id:string,body:unknown)=>api<any>("/inbounds/"+id,{method:"PATCH",body:JSON.stringify(body)}),sync:(id:string)=>api<any>("/inbounds/"+id+"/sync",{method:"POST"}),remove:(id:string)=>api<any>("/inbounds/"+id,{method:"DELETE"})
 };
 export const clients={
  list:()=>api<any[]>("/clients"),
