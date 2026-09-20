@@ -64,7 +64,10 @@ async def configure_server(data: ServerIn, auth: dict = Depends(require_auth), d
     if not network.is_private or network.version != 4:
         raise HTTPException(status_code=400, detail='OpenVPN network must be a private IPv4 network')
     node = await get_scoped_node(data.node_id, db)
-    response = await _request(node, 'PUT', '/openvpn/server', json=data.model_dump())
+    payload = data.model_dump()
+    if ':' not in data.endpoint and not data.endpoint.startswith('['):
+        payload['endpoint'] = f'{data.endpoint}:{data.port}'
+    response = await _request(node, 'PUT', '/openvpn/server', json=payload)
     return response.json()
 
 @router.get('/nodes/{node_id}/status')
