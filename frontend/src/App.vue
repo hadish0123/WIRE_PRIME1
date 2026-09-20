@@ -2,7 +2,7 @@
 import{computed,onMounted,ref}from"vue";
 import{auth,nodes,inbounds,clients,traffic,audit,quotas,admins}from"./api";
 const sections=[["dashboard","داشبورد"],["nodes","نودها"],["inbounds","این‌باندها"],["clients","کلاینت‌ها"],["traffic","ترافیک و سهمیه"],["admins","مدیران و RBAC"],["audit","گزارش حسابرسی"],["settings","تنظیمات"]];
-const section=ref("dashboard"),email=ref(""),password=ref(""),mfaToken=ref(""),mfaCode=ref(""),loginError=ref(""),loading=ref(false),booting=ref(true),me=ref<any>(null),modal=ref<string|null>(null),notice=ref("");
+const artifact=ref<any>(null),section=ref("dashboard"),email=ref(""),password=ref(""),mfaToken=ref(""),mfaCode=ref(""),loginError=ref(""),loading=ref(false),booting=ref(true),me=ref<any>(null),modal=ref<string|null>(null),notice=ref("");
 const nodeRows=ref<any[]>([]),inboundRows=ref<any[]>([]),clientRows=ref<any[]>([]),adminRows=ref<any[]>([]),auditRows=ref<any[]>([]),trafficData=ref<any>({});
 const nodeForm=ref({name:"",address:"",agent_url:""}),inboundForm=ref({node_id:"",name:"",protocol:"wireguard",listen_port:51820,interface:"wg0",address:"10.10.0.1/24",network:"10.10.0.0/24",dns:"1.1.1.1"}),clientForm=ref({inbound_id:"",name:"",assigned_address:"10.10.0.2/32"}),adminForm=ref({email:"",password:"",role:"tenant_operator"}),quotaForm=ref({client_id:"",total_bytes:"",daily_bytes:"",monthly_bytes:"",max_devices:"",warning_ratio:80});
 const title=computed(()=>sections.find(x=>x[0]===section.value)?.[1]??"داشبورد");
@@ -10,6 +10,9 @@ async function load(){loading.value=true;try{me.value=await auth.me();const[n,i,
 async function login(){loginError.value="";loading.value=true;try{const r=await auth.login(email.value,password.value);if(r.mfa_required){mfaToken.value=r.mfa_token;modal.value="mfa";return}localStorage.setItem("primevpn_access",r.access_token);await load()}catch(e){loginError.value=e instanceof Error?e.message:"ورود ناموفق"}finally{loading.value=false}}
 async function verifyMfa(){try{const r=await auth.mfaVerify(mfaToken.value,mfaCode.value);localStorage.setItem("primevpn_access",r.access_token);modal.value=null;await load()}catch(e){loginError.value=e instanceof Error?e.message:"کد MFA نامعتبر"}}
 async function act(fn:()=>Promise<any>,success="انجام شد"){try{await fn();notice.value=success;modal.value=null;await load()}catch(e){notice.value=e instanceof Error?e.message:"خطا"}}
+async function issueConfig(id:string){try{const c=await clients.credential(id);artifact.value=await configs.download(c.artifact_id);modal.value="artifact"}catch(e){notice.value=e instanceof Error?e.message:"خطا در ساخت Config"}}
+async function copyArtifact(){if(artifact.value?.payload)await navigator.clipboard.writeText(artifact.value.payload);notice.value="Config کپی شد"}
+async function provision(id:string){try{const r=await nodes.provision(id);notice.value=r.bootstrap_token?"Bootstrap token ساخته شد؛ برای نصب Agent استفاده کن":"Provisioning ثبت شد";if(r.bootstrap_token)artifact.value=r;modal.value=r.bootstrap_token?"artifact":null;await load()}catch(e){notice.value=e instanceof Error?e.message:"Provisioning ناموفق"}}
 function logout(){localStorage.removeItem("primevpn_access");me.value=null}
 onMounted(load);
 </script>
