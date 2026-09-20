@@ -49,18 +49,20 @@ def collect_traffic(db):
 
 def revoke_client(db,c):
     inbound=db.query(Inbound).filter(Inbound.id==c.inbound_id,Inbound.tenant_id==c.tenant_id).first()
-    node=db.query(Node).filter(Node.id==inbound.node_id).first() if inbound else None
-    cred=db.query(ClientCredential).filter(ClientCredential.client_id==c.id,ClientCredential.revoked_at.is_(None)).order_by(ClientCredential.created_at.desc()).first()
-    if not inbound or not node or not cred or not node.agent_url: return
+    node=db.query(Node).filter(Node.id==inbound.node_id,Node.tenant_id==c.tenant_id).first() if inbound else None
+    creds=db.query(ClientCredential).filter(ClientCredential.client_id==c.id,ClientCredential.revoked_at.is_(None)).order_by(ClientCredential.created_at.desc()).all()
+    if not inbound or not node or not node.agent_url or not creds:return
     if inbound.protocol in {Protocol.wireguard,Protocol.amneziawg}:
-        agent_client.revoke_wireguard_peer(node,inbound.interface,cred.public_identifier)
+        for cred in creds:agent_client.revoke_wireguard_peer(node,inbound.interface,cred.public_identifier)
     elif inbound.protocol==Protocol.openvpn:
         ov=db.query(InboundOpenVPN).filter(InboundOpenVPN.inbound_id==inbound.id).first()
-        if ov and ov.ca_key_encrypted and ov.ca_pem and cred.encrypted_private_material:
-            material=json.loads(decrypt_secret(cred.encrypted_private_material))
-            ov.crl_pem=revoke_certificate(ov.crl_pem,material["certificate"],decrypt_secret(ov.ca_key_encrypted),ov.ca_pem)
+        if ov and ov.ca_key_encrypted and ov.ca_pem:
+            for cred in creds:
+                if not cred.encrypted_private_material:continue
+                material=json.loads(decrypt_secret(cred.encrypted_private_material))
+                ov.crl_pem=revoke_certificate(ov.crl_pem,material["certificate"],decrypt_secret(ov.ca_key_encrypted),ov.ca_pem)
             agent_client.deploy_openvpn_crl(node,inbound.interface,ov.crl_pem)
-    cred.revoked_at=datetime.now(timezone.utc)
+    for cred in creds:cred.revoked_at=datetime.now(timezone.utc)
 
 def enforce_quotas(db):
     now=datetime.now(timezone.utc);day=now.replace(hour=0,minute=0,second=0,microsecond=0);month=now.replace(day=1,hour=0,minute=0,second=0)
