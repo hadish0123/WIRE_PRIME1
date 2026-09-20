@@ -27,6 +27,7 @@ def create_client(data:ClientIn,request:Request,admin:Admin=Depends(require_tena
   if assigned.ip not in network:raise HTTPException(422,"Assigned address is outside inbound network")
  except ValueError:raise HTTPException(422,"Invalid assigned address")
  if db.query(Client).filter(Client.inbound_id==inbound.id,Client.assigned_address==data.assigned_address,Client.tenant_id==admin.tenant_id).first():raise HTTPException(409,"Assigned address already in use")
+ if db.query(Client).filter(Client.inbound_id==inbound.id,Client.name==data.name,Client.tenant_id==admin.tenant_id).first():raise HTTPException(409,"Client name already exists on this inbound")
  c=Client(tenant_id=admin.tenant_id,**data.model_dump());db.add(c);db.flush();record(db,admin,request,"client.create","client",c.id);db.commit();db.refresh(c);return c
 
 @router.post("/{client_id}/revoke")
