@@ -1,7 +1,7 @@
 from fastapi import APIRouter,Depends,HTTPException
 from sqlalchemy.orm import Session
 from ..db import get_db
-from ..deps import current_admin,require_tenant_manager
+from ..deps import current_admin,require_tenant_manager,can_access_client
 from ..models import Admin,Client,Protocol
 from ..services.config_artifacts import create_artifact,read_artifact
 router=APIRouter()
