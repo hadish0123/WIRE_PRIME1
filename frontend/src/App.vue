@@ -18,6 +18,9 @@ const trafficOut=computed(()=>Number(trafficData.value.bytes_out||0));
 const trafficMax=computed(()=>Math.max(trafficIn.value,trafficOut.value,1));
 const trafficInPct=computed(()=>Math.round(trafficIn.value/trafficMax.value*100));
 const trafficOutPct=computed(()=>Math.round(trafficOut.value/trafficMax.value*100));
+const trafficTotalLabel=computed(()=>formatBytes(trafficTotal.value));
+const trafficInLabel=computed(()=>formatBytes(trafficIn.value));
+const trafficOutLabel=computed(()=>formatBytes(trafficOut.value));
 const recentActivity=computed(()=>auditRows.value.slice(0,5));
 const formatBytes=(n:number)=>{if(!n)return "0 B";const u=["B","KB","MB","GB","TB","PB"];const i=Math.min(Math.floor(Math.log(n)/Math.log(1024)),u.length-1);return (n/Math.pow(1024,i)).toFixed(i?2:0)+" "+u[i]};
 const activityLabel=(x:any)=>{const a=String(x?.action||"Activity");return ({login:"ورود کاربر",node_provision:"Provision نود",node_create:"ایجاد نود",inbound_create:"ایجاد Inbound",inbound_sync:"Sync Inbound",client_create:"ایجاد Client",client_revoke:"Revoke Client",quota_set:"تنظیم سهمیه"} as Record<string,string>)[a]||a};
@@ -48,7 +51,7 @@ onMounted(load);
 <article><span class="stat-icon users">♟</span><small>{{t("کل کلاینت‌ها","Total Clients")}}</small><strong>{{clientRows.length}}</strong><em class="neutral">{{clientActive}} {{t("فعال","active")}}</em></article>
 <article><span class="stat-icon nodes">▤</span><small>{{t("نودهای آنلاین","Online Nodes")}}</small><strong>{{nodeOnline}}<small class="of-total"> / {{nodeRows.length}}</small></strong><em class="neutral">{{nodeOffline}} {{t("نود خارج از دسترس","offline")}}</em></article>
 <article><span class="stat-icon plans">◎</span><small>{{t("اینباند‌های فعال","Active Inbounds")}}</small><strong>{{inboundActive}}<small class="of-total"> / {{inboundRows.length}}</small></strong><em class="neutral">{{inboundRows.length-inboundActive}} {{t("غیرفعال","inactive")}}</em></article>
-<article><span class="stat-icon traffic">⌁</span><small>{{t("کل ترافیک","Total Traffic")}}</small><strong>{{formatBytes(trafficTotal)}}</strong><em class="neutral">IN {{formatBytes(trafficIn)}} · OUT {{formatBytes(trafficOut)}}</em></article>
+<article><span class="stat-icon traffic">⌁</span><small>{{t("کل ترافیک","Total Traffic")}}</small><strong>{{trafficTotalLabel}}</strong><em class="neutral">IN {{trafficInLabel}} · OUT {{trafficOutLabel}}</em></article>
 </div>
 <div class="dashboard-grid">
 <div class="panel traffic-card"><div class="panel-head"><div><h2>{{t("مصرف ترافیک","Traffic Usage")}}</h2><small>{{t("بر اساس داده‌های ثبت‌شده","Based on recorded usage")}}</small></div><span class="live-badge"><i></i>{{t("زنده","Live")}}</span></div>
