@@ -5,6 +5,8 @@
   },
   "navigation": {
     "nodes": "سرورها",
+    "openvpn": "OpenVPN",
+    "admins": "مدیران",
     "users": "کاربران",
     "remnawave": "Remnawave",
     "telegramProxy": "پروکسی تلگرام",
