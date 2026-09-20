@@ -4,7 +4,8 @@
   </template>
   <template v-else>
     <div class="layout">
-      <header class="topbar">
+      <aside class="topbar">
+        <div class="sidebar-head">
         <div class="brand-block">
           <span class="brand-mark">PRIME</span>
           <div>
@@ -42,7 +43,9 @@
             @click="logout"
           />
         </div>
-        <nav :aria-label="$t('navigation.menu')">
+        <div class="sidebar-menu-title">MENU</div>
+        <Button class="menu-toggle" icon="pi pi-ellipsis-v" text rounded aria-label="Menu" @click="menuOpen = !menuOpen" />
+        <nav v-if="menuOpen" :aria-label="$t('navigation.menu')">
           <RouterLink to="/openvpn"
             ><i class="pi pi-lock" /> {{ $t('navigation.openvpn') }}</RouterLink
           >
@@ -62,7 +65,10 @@
             ><i class="pi pi-send" /> {{ $t('navigation.telegramProxy') }}</RouterLink
           >
         </nav>
-      </header>
+        <div class="sidebar-footer">
+          <span>PRIMEVPN</span><small>Control Panel</small>
+        </div>
+      </aside>
       <main class="content">
         <RouterView />
       </main>
@@ -87,6 +93,7 @@ const { t } = useI18n()
 const isLoginPage = computed(() => route.path === '/login')
 
 const isDark = ref(true)
+const menuOpen = ref(true)
 
 const currentLocale = computed(() => i18n.global.locale.value)
 
@@ -190,9 +197,9 @@ body::before {
   z-index: 10;
   flex-direction: column;
   align-items: center;
-  gap: var(--app-space-5);
+  gap: var(--app-space-4);
   min-height: 100vh;
-  padding: var(--app-space-5) var(--app-space-4);
+  padding: 4.5rem var(--app-space-4) var(--app-space-4);
   background: linear-gradient(
     180deg,
     var(--app-shell),
@@ -202,6 +209,14 @@ body::before {
   backdrop-filter: blur(18px) saturate(130%);
   box-shadow: 1px 0 0 rgba(255, 255, 255, 0.04);
 }
+
+.sidebar-head { display:flex; align-items:center; gap:.75rem; width:100%; }
+
+.sidebar-menu-title { width:100%; margin-top:.25rem; color:var(--app-text-soft); font-size:.65rem; font-weight:900; letter-spacing:.16em; }
+.menu-toggle { position:absolute; top:1.15rem; left:1rem; color:var(--app-text-muted) !important; }
+.sidebar-footer { margin-top:auto; width:100%; padding-top:1rem; border-top:1px solid var(--app-border); color:var(--app-text-soft); font-size:.68rem; }
+.sidebar-footer span { display:block; font-weight:900; color:var(--app-text-muted); letter-spacing:.08em; }
+.sidebar-footer small { display:block; margin-top:.2rem; }
 
 .brand-block {
   display: grid;
@@ -416,7 +431,7 @@ nav a.router-link-active {
     align-items: center;
     flex-wrap: wrap;
     gap: 0.7rem 1rem;
-    padding: 0.75rem 1rem;
+    padding: 4rem 1rem .75rem;
     border-right: none;
     border-bottom: 1px solid var(--app-border-strong);
   }
