@@ -2,7 +2,7 @@ import time
 from datetime import datetime,timezone
 from sqlalchemy import func
 from .db import SessionLocal
-from .models import Job,Quota,TrafficUsage,Device,Client,Inbound,ClientCredential,Protocol
+from .models import Job,Quota,TrafficUsage,Device,Client,Inbound,ClientCredential,Protocol,Node,ResourceState
 from .services.agent_client import revoke_wireguard_peer
 def enforce_quotas(db):
  now=datetime.now(timezone.utc);day_start=now.replace(hour=0,minute=0,second=0,microsecond=0);month_start=now.replace(day=1,hour=0,minute=0,second=0,microsecond=0)
@@ -23,11 +23,11 @@ def enforce_quotas(db):
     inbound=db.query(Inbound).filter(Inbound.id==c.inbound_id,Inbound.tenant_id==q.tenant_id).first()
     cred=db.query(ClientCredential).filter(ClientCredential.client_id=c.id,ClientCredential.revoked_at.is_(None)).order_by(ClientCredential.created_at.desc()).first()
     if inbound and inbound.protocol in {Protocol.wireguard,Protocol.amneziawg} and cred:
-     node=db.query(__import__("app.models",fromlist=["Node"]).Node).filter(__import__("app.models",fromlist=["Node"]).Node.id==inbound.node_id).first()
+     node=db.query(Node).filter(Node.id==inbound.node_id).first()
      if node and node.agent_url:
       try:revoke_wireguard_peer(node,inbound.interface,cred.public_identifier)
       except Exception:pass
-     c.status=__import__("app.models",fromlist=["ResourceState"]).ResourceState.suspended
+     c.status=ResourceState.suspended
 def run_once():
  db=SessionLocal()
  try:
