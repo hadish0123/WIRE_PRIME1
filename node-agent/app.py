@@ -100,3 +100,21 @@ def revoke_peer(data:RevokePeer,x_agent_token:str|None=Header(default=None)):
  p=subprocess.run(["wg","set",data.interface,"peer",data.public_key,"remove"],capture_output=True,text=True,timeout=15)
  if p.returncode:raise HTTPException(502,p.stderr.strip() or "Peer revoke failed")
  return {"revoked":True,"interface":data.interface,"public_key":data.public_key}
+
+class OpenVPNRevoke(BaseModel):
+ instance:str=Field(min_length=1,max_length=80)
+ crl_pem:str=Field(min_length=20,max_length=200000)
+@app.post("/openvpn/crl")
+def openvpn_crl(data:OpenVPNRevoke,x_agent_token:str|None=Header(default=None)):
+ auth(x_agent_token,"write");safe_interface(data.instance)
+ base="/etc/primevpn";os.makedirs(base,mode=0o700,exist_ok=True);path=f"{base}/{data.instance}.crl";tmp=path+".new"
+ try:
+  with open(tmp,"w",encoding="utf-8") as f:f.write(data.crl_pem)
+  os.chmod(tmp,0o600);os.replace(tmp,path)
+  if shutil.which("systemctl"):
+   subprocess.run(["systemctl","reload-or-restart",f"openvpn-server@{data.instance}"],capture_output=True,text=True,timeout=30,check=True)
+  return {"applied":True,"path":path}
+ except Exception as e:
+  try:os.unlink(tmp)
+  except FileNotFoundError:pass
+  raise HTTPException(502,f"CRL apply failed: {e}")
