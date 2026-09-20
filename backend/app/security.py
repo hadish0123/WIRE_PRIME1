@@ -11,9 +11,9 @@ def verify_password(password,hashed):
  except VerifyMismatchError:return False
 def create_access_token(subject,tenant_id,role):
  exp=datetime.now(timezone.utc)+timedelta(minutes=settings.access_token_minutes)
- return jwt.encode({"sub":subject,"tenant_id":tenant_id,"role":role,"type":"access","exp":exp},settings.jwt_secret,algorithm=settings.jwt_algorithm)
+ return jwt.encode({"sub":subject,"tenant_id":tenant_id,"role":role,"type":"access","iat":datetime.now(timezone.utc),"exp":exp,"iss":"primevpn-control","aud":"primevpn-web","jti":secrets.token_hex(16)},settings.jwt_secret,algorithm=settings.jwt_algorithm)
 def decode_access_token(token):
- p=jwt.decode(token,settings.jwt_secret,algorithms=[settings.jwt_algorithm],options={"require":["exp","sub","type"]})
+ p=jwt.decode(token,settings.jwt_secret,algorithms=[settings.jwt_algorithm],audience="primevpn-web",issuer="primevpn-control",algorithms=[settings.jwt_algorithm],options={"require":["exp","iat","sub","type","jti"]})
  if p.get("type")!="access":raise jwt.InvalidTokenError("invalid access token")
  return p
 def create_mfa_challenge(subject,tenant_id):
