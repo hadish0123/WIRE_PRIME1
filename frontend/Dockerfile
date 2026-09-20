@@ -6,7 +6,9 @@ COPY package.json .
 RUN npm install --include=dev --ignore-scripts
 COPY . .
 RUN npm run typecheck && npm run build
+
 FROM nginx:1.29-alpine
 COPY --from=build /app/dist /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 EXPOSE 80
+CMD ["sh","-c","sed -i "s/listen 80;/listen \$\{PORT\};/" /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"]
