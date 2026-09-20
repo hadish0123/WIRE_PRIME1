@@ -48,6 +48,17 @@ class Session(Base):
  __tablename__="sessions";id:Mapped[str]=mapped_column(String(36),primary_key=True,default=uid);tenant_id:Mapped[str]=mapped_column(ForeignKey("tenants.id",ondelete="CASCADE"),index=True);client_id:Mapped[str]=mapped_column(ForeignKey("clients.id",ondelete="CASCADE"),index=True);node_id:Mapped[str]=mapped_column(ForeignKey("nodes.id",ondelete="CASCADE"),index=True);inbound_id:Mapped[str]=mapped_column(ForeignKey("inbounds.id",ondelete="CASCADE"),index=True);endpoint:Mapped[str|None]=mapped_column(String(255));bytes_in:Mapped[int]=mapped_column(BigInteger,default=0);bytes_out:Mapped[int]=mapped_column(BigInteger,default=0);started_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=now);last_seen_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=now);ended_at:Mapped[datetime|None]=mapped_column(DateTime(timezone=True))
 class TrafficUsage(Base):
  __tablename__="traffic_usage";id:Mapped[str]=mapped_column(String(36),primary_key=True,default=uid);tenant_id:Mapped[str]=mapped_column(ForeignKey("tenants.id",ondelete="CASCADE"),index=True);client_id:Mapped[str]=mapped_column(ForeignKey("clients.id",ondelete="CASCADE"),index=True);node_id:Mapped[str]=mapped_column(ForeignKey("nodes.id",ondelete="CASCADE"),index=True);inbound_id:Mapped[str]=mapped_column(ForeignKey("inbounds.id",ondelete="CASCADE"),index=True);bytes_in:Mapped[int]=mapped_column(BigInteger,default=0);bytes_out:Mapped[int]=mapped_column(BigInteger,default=0);first_seen:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=now);last_seen:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=now)
+class TrafficSnapshot(Base):
+ __tablename__="traffic_snapshots"
+ id:Mapped[str]=mapped_column(String(36),primary_key=True,default=uid)
+ tenant_id:Mapped[str]=mapped_column(ForeignKey("tenants.id",ondelete="CASCADE"),index=True)
+ client_id:Mapped[str]=mapped_column(ForeignKey("clients.id",ondelete="CASCADE"),index=True)
+ node_id:Mapped[str]=mapped_column(ForeignKey("nodes.id",ondelete="CASCADE"),index=True)
+ inbound_id:Mapped[str]=mapped_column(ForeignKey("inbounds.id",ondelete="CASCADE"),index=True)
+ bytes_in:Mapped[int]=mapped_column(BigInteger,default=0)
+ bytes_out:Mapped[int]=mapped_column(BigInteger,default=0)
+ captured_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=now,index=True)
+
 class Quota(Base):
  __tablename__="quotas";id:Mapped[str]=mapped_column(String(36),primary_key=True,default=uid);tenant_id:Mapped[str]=mapped_column(ForeignKey("tenants.id",ondelete="CASCADE"),index=True);client_id:Mapped[str]=mapped_column(ForeignKey("clients.id",ondelete="CASCADE"),unique=True);total_bytes:Mapped[int|None]=mapped_column(BigInteger);daily_bytes:Mapped[int|None]=mapped_column(BigInteger);monthly_bytes:Mapped[int|None]=mapped_column(BigInteger);max_devices:Mapped[int|None]=mapped_column(Integer);warning_ratio:Mapped[int]=mapped_column(Integer,default=80);state:Mapped[str]=mapped_column(String(30),default="NORMAL");expires_at:Mapped[datetime|None]=mapped_column(DateTime(timezone=True))
 class ConfigArtifact(Base):
