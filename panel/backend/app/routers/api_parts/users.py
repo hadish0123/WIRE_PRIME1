@@ -28,7 +28,7 @@ from app.models import (
     UserSchema,
     UserWithPeers,
 )
-from app.routers.api_parts.common import DB, guard_not_remnawave_managed
+from app.routers.api_parts.common import DB, guard_not_remnawave_managed, owner_filter, tenant_owner_for_create
 from app.services.devices import (
     count_live_devices,
     device_views,
@@ -79,6 +79,8 @@ async def get_user_or_404(user_id: str, db: DB) -> User:
     user = await db.get(User, user_id)
     if not user:
         raise HTTPException(status_code=404, detail='User not found')
+    from app.routers.api_parts.common import guard_tenant_owner
+    guard_tenant_owner(user.owner_admin_id)
     return user
 
 
@@ -116,7 +118,7 @@ async def api_list_users(db: DB):
     rows = (
         (
             await db.execute(
-                select(User).options(
+                select(User).where(owner_filter(User.owner_admin_id)).options(
                     selectinload(User.peers).selectinload(Peer.node),
                     selectinload(User.peers).selectinload(Peer.device),
                     selectinload(User.devices),
@@ -128,7 +130,7 @@ async def api_list_users(db: DB):
         .all()
     )
     # One node list for the whole page: per-device availability is derived from it in memory.
-    nodes = list((await db.execute(select(Node).order_by(Node.name, Node.id))).scalars().all())
+    nodes = list((await db.execute(select(Node).where(owner_filter(Node.owner_admin_id)).order_by(Node.name, Node.id))).scalars().all())
     local_traffic_rows = (
         (await db.execute(select(LocalAmneziawgUserLifetimeTraffic))).scalars().all()
     )
@@ -212,6 +214,7 @@ async def api_list_users(db: DB):
 async def api_add_user(data: UserIn, db: DB):
     """Create a local account. It starts empty: no devices, keys or peers, only its limit budget."""
     user = await create_local_user(db, data.name, device_limit=data.device_limit)
+    user.owner_admin_id = tenant_owner_for_create()
     await db.commit()
     await db.refresh(user)
     return user
