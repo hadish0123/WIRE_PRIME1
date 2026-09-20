@@ -1,12 +1,12 @@
 from fastapi import APIRouter,Depends,HTTPException
 from sqlalchemy.orm import Session
 from ..db import get_db
-from ..deps import current_admin
+from ..deps import current_admin,require_tenant_manager
 from ..models import Admin,Client,Protocol
 from ..services.config_artifacts import create_artifact,read_artifact
 router=APIRouter()
 @router.post("/clients/{client_id}")
-def generate(client_id:str,protocol:Protocol,payload:str,admin:Admin=Depends(current_admin),db:Session=Depends(get_db)):
+def generate(client_id:str,protocol:Protocol,payload:str,admin:Admin=Depends(require_tenant_manager),db:Session=Depends(get_db)):
  c=db.query(Client).filter(Client.id==client_id,Client.tenant_id==admin.tenant_id).first()
  if not c:raise HTTPException(404,"Client not found")
  a=create_artifact(db,c,protocol,payload)
