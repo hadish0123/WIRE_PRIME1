@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 : "${PRIMEVPN_AGENT_VERIFY_PUBLIC_KEY:?Set PRIMEVPN_AGENT_VERIFY_PUBLIC_KEY to the Control Plane Ed25519 public PEM}"
+: "${PRIMEVPN_NODE_ID:?Set PRIMEVPN_NODE_ID to the PRIMEVPN Node UUID}"
 install -d -m 0700 /etc/primevpn /opt/primevpn-agent /run/primevpn
 cp -a . /opt/primevpn-agent/
 apt-get update
@@ -9,7 +10,7 @@ if command -v awg >/dev/null 2>&1; then echo "AmneziaWG tools detected"; else ec
 python3 -m venv /opt/primevpn-agent/.venv
 /opt/primevpn-agent/.venv/bin/pip install --upgrade pip
 /opt/primevpn-agent/.venv/bin/pip install .
-printf '%s\n' "PRIMEVPN_AGENT_VERIFY_PUBLIC_KEY=$PRIMEVPN_AGENT_VERIFY_PUBLIC_KEY" > /etc/primevpn/agent.env
+printf '%s\n' "PRIMEVPN_AGENT_VERIFY_PUBLIC_KEY=$PRIMEVPN_AGENT_VERIFY_PUBLIC_KEY" "PRIMEVPN_NODE_ID=$PRIMEVPN_NODE_ID" > /etc/primevpn/agent.env
 chmod 0600 /etc/primevpn/agent.env
 cp primevpn-agent.service /etc/systemd/system/primevpn-agent.service
 systemctl daemon-reload
