@@ -12,8 +12,8 @@ def get_db():
   db.close()
 
 def set_platform_context(db):
- db.execute(text("select set_config('app.is_platform','true',true)"))
+ db.execute(text("select set_config('app.is_platform','true',false)"))
 
 def set_tenant_context(db,tenant_id):
- db.execute(text("select set_config('app.is_platform','false',true)"))
+ db.execute(text("select set_config('app.is_platform','false' ,false)"))
  db.execute(text("select set_config('app.tenant_id',:tenant,true)"),{"tenant":tenant_id})
