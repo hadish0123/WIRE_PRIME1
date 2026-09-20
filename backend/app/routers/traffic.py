@@ -4,7 +4,7 @@ from fastapi import APIRouter,Depends,HTTPException,Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from ..db import get_db
-from ..deps import current_admin,require_tenant_manager
+from ..deps import current_admin,require_tenant_manager,require_permission
 from ..models import Admin,TrafficUsage,TrafficSnapshot,Client,Inbound,Node,Quota
 
 router=APIRouter()
@@ -39,7 +39,7 @@ def collect(admin:Admin=Depends(require_tenant_manager),db:Session=Depends(get_d
     return {"captured_at":now,"rows":len(rows)}
 
 @router.get("/summary")
-def summary(days:int=Query(default=7,ge=1,le=90),admin:Admin=Depends(current_admin),db:Session=Depends(get_db)):
+def summary(days:int=Query(default=7,ge=1,le=90),admin:Admin=Depends(require_permission("traffic:read")),db:Session=Depends(get_db)):
     now=datetime.now(timezone.utc)
     a,b=_tenant_usage(db,admin.tenant_id)
     today=now.replace(hour=0,minute=0,second=0,microsecond=0)
