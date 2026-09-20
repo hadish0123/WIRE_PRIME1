@@ -16,6 +16,7 @@ services:
     ports:
       - "51820:51820/udp"
       - "1194:1194/udp"
+      - "1194:1194/tcp"
       - "8000:8000"
       - "${MTPROXY_PORT:-443}:${MTPROXY_PORT:-443}/tcp"
     environment:
