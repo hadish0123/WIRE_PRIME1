@@ -9,7 +9,7 @@ router=APIRouter()
 def plans(admin:Admin=Depends(current_admin),db:Session=Depends(get_db)):
  return db.query(Plan).join(Product,Plan.product_id==Product.id).filter(Product.tenant_id==admin.tenant_id,Plan.enabled==True).all()
 @router.post("/orders")
-def create_order(plan_id:str,request:Request,admin:Admin=Depends(current_admin),db:Session=Depends(get_db)):
+def create_order(plan_id:str,request:Request,admin:Admin=Depends(require_tenant_manager),db:Session=Depends(get_db)):
  key=request.headers.get("Idempotency-Key")
  if not key:raise HTTPException(400,"Idempotency-Key required")
  old=db.query(Order).filter(Order.idempotency_key==key,Order.tenant_id==admin.tenant_id).first()
