@@ -192,6 +192,13 @@ async def _public_telegram_proxy(db: AsyncSession) -> PublicTelegramProxy | None
     return payload
 
 
+async def _nodes_for_user(db: AsyncSession, user: User) -> list[Node]:
+    stmt = select(Node).order_by(Node.name, Node.id)
+    if user.owner_admin_id:
+        stmt = stmt.where(Node.owner_admin_id == user.owner_admin_id)
+    return list((await db.execute(stmt)).scalars().all())
+
+
 def _public_user_name(user: User) -> str:
     rw = user.remnawave_user
     if rw is None:
@@ -473,7 +480,7 @@ async def pub_user_info(user_id: str, db: DB):
     # every ``ready`` flag is off and every ``vpn_uri`` is null, so the list exposes no
     # configuration - but the owner still recognises the devices it owns and can revoke them.
     authorized = summary['status']['code'] == 'active'
-    nodes = list((await db.execute(select(Node).order_by(Node.name, Node.id))).scalars().all())
+    nodes = await _nodes_for_user(db, user)
     devices = await list_live_devices(db, user.id)
     peers_by_device = await _peers_by_device(db, [device.id for device in devices])
 
