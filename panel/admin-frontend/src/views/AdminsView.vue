@@ -17,13 +17,13 @@
           <div class="admin-main">
             <div>
               <strong>{{ admin.username }}</strong>
-              <div class="muted">{{ admin.role }} · {{ admin.is_active ? 'active' : 'inactive' }}</div>
+              <div class="muted">{{ admin.role }} · {{ admin.is_active ? $t('status.active') : $t('status.disabled') }}</div>
             </div>
             <Tag :value="admin.role" :severity="admin.role === 'super_admin' ? 'success' : 'info'" />
           </div>
           <div class="admin-meta">
-            <span>Permissions: {{ admin.permissions.length ? admin.permissions.join(', ') : 'role defaults' }}</span>
-            <span>Nodes: {{ admin.node_ids.length ? admin.node_ids.join(', ') : 'all nodes' }}</span>
+            <span>{{ $t('admins.permissions') }}: {{ admin.permissions.length ? admin.permissions.join(', ') : $t('admins.roleDefaults') }}</span>
+            <span>{{ $t('admins.nodes') }}: {{ admin.node_ids.length ? admin.node_ids.join(', ') : $t('admins.allNodes') }}</span>
           </div>
           <div class="admin-actions">
             <Button :label="$t('admins.toggle')" size="small" severity="secondary" outlined @click="toggle(admin)" />
@@ -54,10 +54,12 @@
 import { onMounted, reactive, ref } from 'vue'
 import Button from 'primevue/button'
 import Dialog from 'primevue/dialog'
-import Tag from 'primevue/tag'\nimport { useI18n } from 'vue-i18n'
+import Tag from 'primevue/tag'
+import { useI18n } from 'vue-i18n'
 import { adminsApi, type Admin } from '../api/admins'
 
-const { t } = useI18n()\nconst admins = ref<Admin[]>([])
+const { t } = useI18n()
+const admins = ref<Admin[]>([])
 const loading = ref(true)
 const saving = ref(false)
 const error = ref('')
