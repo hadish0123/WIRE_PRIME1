@@ -150,6 +150,8 @@ async def require_auth(creds: Annotated[HTTPAuthorizationCredentials, Security(_
     admin = await db.get(Admin, admin_id)
     if not admin or not admin.is_active:
         raise HTTPException(status_code=401, detail='Account is inactive or no longer exists')
+    if request.url.path.startswith(('/api/remnawave', '/api/telegram-proxy')) and not is_super_admin(admin):
+        raise HTTPException(status_code=403, detail='Platform settings are restricted to the owner')
     required = required_permission_for_request(request.url.path, request.method)
     if required and not has_permission(admin, required):
         raise HTTPException(status_code=403, detail='Permission denied')
