@@ -1,12 +1,10 @@
-import os,time,jwt
+import os
+import jwt
 from fastapi import HTTPException
-from cryptography.hazmat.primitives import serialization
-PRIVATE_KEY=os.environ.get("PRIMEVPN_AGENT_SIGNING_PRIVATE_KEY","")
+VERIFY_KEY=os.environ.get("PRIMEVPN_AGENT_VERIFY_PUBLIC_KEY","")
 def verify_control_token(token:str)->dict:
- if not PRIVATE_KEY: raise HTTPException(503,"Agent signing key is not configured")
- try:
-  return jwt.decode(token,PRIVATE_KEY,algorithms=["EdDSA"],options={"require":["sub","exp","iat","jti","type"]},issuer="primevpn-control",audience="primevpn-agent")
- except jwt.PyJWTError as e: raise HTTPException(401,"Invalid agent credential") from e
+ if not VERIFY_KEY:raise HTTPException(503,"Agent verification key is not configured")
+ try:return jwt.decode(token,VERIFY_KEY,algorithms=["EdDSA"],options={"require":["sub","exp","iat","jti","type"]},issuer="primevpn-control",audience="primevpn-agent")
+ except jwt.PyJWTError as e:raise HTTPException(401,"Invalid agent credential") from e
 def require_scope(claims:dict,scope:str):
- if scope not in claims.get("scopes",[]):raise HTTPException(403,"Agent scope denied")
- if claims.get("type")!="node_access":raise HTTPException(401,"Invalid credential type")
+ if claims.get("type")!="node_access" or scope not in claims.get("scopes",[]):raise HTTPException(403,"Agent scope denied")
