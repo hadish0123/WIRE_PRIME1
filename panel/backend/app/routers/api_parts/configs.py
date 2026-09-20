@@ -22,7 +22,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Device, Node, Peer, User
-from app.routers.api_parts.common import DB, guard_tenant_owner, owner_filter
+from app.routers.api_parts.common import DB, guard_tenant_owner, owner_filter, node_filter
 from app.services.account_policy import fresh_account_status
 from app.services.devices import (
     PENDING_CONFIG_DETAIL,
@@ -151,7 +151,7 @@ async def _ready_peer(db: AsyncSession, device: Device, node: Node) -> Peer:
 
 
 async def _nodes(db: AsyncSession) -> list[Node]:
-    return list((await db.execute(select(Node).where(owner_filter(Node.owner_admin_id)).order_by(Node.name, Node.id))).scalars().all())
+    return list((await db.execute(select(Node).where(node_filter()).order_by(Node.name, Node.id))).scalars().all())
 
 
 async def _ready_zip_entries(
