@@ -54,7 +54,7 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=/opt/primevpn-node-agent
 EnvironmentFile=/etc/primevpn/agent.env
-ExecStart=/opt/primevpn-node-agent/venv/bin/uvicorn app:app --host 0.0.0.0 --port ${PORT} --ssl-keyfile /etc/primevpn/agent.key --ssl-certfile /etc/primevpn/agent.crt
+ExecStart=/opt/primevpn-node-agent/venv/bin/uvicorn app:app --host 0.0.0.0 --port ${{PORT}} --ssl-keyfile /etc/primevpn/agent.key --ssl-certfile /etc/primevpn/agent.crt
 Restart=always
 RestartSec=3
 
