@@ -248,7 +248,7 @@ const router = useRouter()
 const toast = useToast()
 const { t } = useI18n()
 
-const { users, loading, loadError, newName, addingUser, addUser, block, unblock, confirmDelete } =
+const { users, loading, loadError, newName, addingUser, addUser, block, unblock, confirmDelete, load: loadUsers } =
   useUsers()
 
 const query = reactive<UserListQuery>({
