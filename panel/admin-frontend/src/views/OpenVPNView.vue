@@ -18,7 +18,7 @@
       <h3>{{ $t('openvpn.createClient') }}</h3>
       <div class="form-grid">
         <label>{{ $t('openvpn.user') }}<select v-model="client.user_id"><option v-for="u in users" :key="u.id" :value="u.id">{{ u.name }}</option></select></label>
-        <label>Node<select v-model="client.node_id"><option v-for="n in nodes" :key="n.id" :value="n.id">{{ n.name }}</option></select></label>
+        <label>{{ $t('openvpn.node') }}<select v-model="client.node_id"><option v-for="n in nodes" :key="n.id" :value="n.id">{{ n.name }}</option></select></label>
         <label>{{ $t('openvpn.clientName') }}<input v-model="client.name" placeholder="phone-01" /></label>
       </div>
       <Button :label="$t('openvpn.createOvpn')" icon="pi pi-plus" :loading="saving" @click="createClient" />
@@ -34,11 +34,13 @@
 </template>
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
-import Button from 'primevue/button'\nimport { useI18n } from 'vue-i18n'
+import Button from 'primevue/button'
+import { useI18n } from 'vue-i18n'
 import { openvpnApi, type OpenVPNClient } from '../api/openvpn'
 import { req } from '../api/client'
 type Item={id:string;name:string}
-const { t } = useI18n()\nconst nodes=ref<Item[]>([]), users=ref<Item[]>([]), clients=ref<OpenVPNClient[]>([]), saving=ref(false)
+const { t } = useI18n()
+const nodes=ref<Item[]>([]), users=ref<Item[]>([]), clients=ref<OpenVPNClient[]>([]), saving=ref(false)
 const server=reactive({node_id:'',endpoint:'',port:1194,protocol:'udp' as 'udp'|'tcp-server',network:'10.9.0.0/24'})
 const client=reactive({user_id:'',node_id:'',name:''})
 async function load(){nodes.value=(await req<Item[]>('GET','/nodes'))||[]; users.value=((await req<any[]>('GET','/users'))||[]).map(u=>({id:u.id,name:u.name})); clients.value=(await openvpnApi.list())||[]; if(!server.node_id&&nodes.value[0]) server.node_id=nodes.value[0].id; if(!client.node_id&&nodes.value[0]) client.node_id=nodes.value[0].id; if(!client.user_id&&users.value[0]) client.user_id=users.value[0].id}
