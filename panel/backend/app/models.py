@@ -14,6 +14,7 @@ from sqlalchemy import (
     ForeignKeyConstraint,
     Integer,
     String,
+    Text,
     UniqueConstraint,
     select,
 )
@@ -36,6 +37,20 @@ def _public_token() -> str:
 
 
 # ── ORM Models ────────────────────────────────────────────────────────────────
+
+
+class Admin(Base):
+    __tablename__ = 'admins'
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    username: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    role: Mapped[str] = mapped_column(String, nullable=False, default='sub_admin')
+    permissions_json: Mapped[str] = mapped_column(Text, nullable=False, default='[]')
+    node_ids_json: Mapped[str] = mapped_column(Text, nullable=False, default='[]')
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class Node(Base):
