@@ -29,6 +29,7 @@
         </div>
       </div>
       <div class="user-create-card page-actions">
+        <Button label="ساخت کلاینت" icon="pi pi-plus-circle" severity="secondary" outlined size="small" @click="showClientDialog = true" />
         <InputText
           v-model="newName"
           :placeholder="$t('users.addPlaceholder')"
@@ -196,7 +197,30 @@
       @update:visible="trafficDialog.visible = $event"
     />
   </div>
-</template>
+    <Dialog v-model:visible="showClientDialog" modal header="ساخت کلاینت" :style="{ width: 'min(36rem, 94vw)' }">
+      <div class="client-dialog-form">
+        <label>کاربر
+          <select v-model="clientForm.userId">
+            <option value="">انتخاب کاربر</option>
+            <option v-for="u in users" :key="u.id" :value="u.id">{{ u.name }}</option>
+          </select>
+        </label>
+        <label>نام کلاینت
+          <InputText v-model="clientForm.name" placeholder="iphone-01" />
+        </label>
+        <label>حجم (GB)
+          <InputNumber v-model="clientForm.traffic_gb" :min="0" :useGrouping="false" />
+        </label>
+        <label>مدت (روز)
+          <InputNumber v-model="clientForm.days" :min="0" :useGrouping="false" />
+        </label>
+        <div class="dialog-footer">
+          <Button label="انصراف" severity="secondary" text @click="showClientDialog=false" />
+          <Button label="ساخت" icon="pi pi-check" :loading="clientSaving" @click="createClient" />
+        </div>
+      </div>
+    </Dialog>
+  </template>
 
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
@@ -205,7 +229,9 @@ import { useI18n } from 'vue-i18n'
 import { useToast } from 'primevue/usetoast'
 import InputText from 'primevue/inputtext'
 import Button from 'primevue/button'
+import InputNumber from 'primevue/inputnumber'
 import Message from 'primevue/message'
+import Dialog from 'primevue/dialog'
 import ConfirmPopup from 'primevue/confirmpopup'
 import UserTable from '../components/users/UserTable.vue'
 import UserDetailDrawer from '../components/users/UserDetailDrawer.vue'
@@ -237,6 +263,9 @@ const query = reactive<UserListQuery>({
 const syncingUser = ref(false)
 const savingDeviceLimit = ref(false)
 const deviceLimitError = ref<string | null>(null)
+const showClientDialog = ref(false)
+const clientSaving = ref(false)
+const clientForm = reactive({ userId: '', name: '', traffic_gb: 0, days: 0 })
 
 const listResponse = computed(() => usersApi.queryLocalUsers(users.value, query))
 const visibleUsers = computed(() => listResponse.value.items)
@@ -298,6 +327,27 @@ function selectUser(user: User) {
 
 function clearSelectedUser() {
   void router.push(`/users${window.location.search}`)
+}
+
+async function createClient() {
+  if (!clientForm.userId || !clientForm.name.trim()) return
+  clientSaving.value = true
+  try {
+    await usersApi.createClient(clientForm.userId, {
+      name: clientForm.name.trim(),
+      traffic_gb: clientForm.traffic_gb,
+      days: clientForm.days,
+    })
+    showClientDialog.value = false
+    clientForm.name = ''
+    clientForm.traffic_gb = 0
+    clientForm.days = 0
+    await loadUsers()
+  } catch (e: unknown) {
+    toast.add({ severity: 'error', summary: t('toasts.error'), detail: e instanceof Error ? e.message : t('toasts.error'), life: 4000 })
+  } finally {
+    clientSaving.value = false
+  }
 }
 
 async function syncRemnawaveUser(user: User) {
