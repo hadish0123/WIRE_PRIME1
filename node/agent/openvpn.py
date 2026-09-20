@@ -181,6 +181,7 @@ def _write_server_config(cfg: ServerConfig) -> None:
         f'status {BASE_DIR}/status.log 10\nverb 3\n'
     )
     (BASE_DIR / 'endpoint').write_text(cfg.endpoint)
+    (BASE_DIR / 'server_meta.json').write_text(json.dumps({'port': cfg.port, 'protocol': cfg.protocol, 'endpoint': cfg.endpoint}, separators=(',', ':')))
 
 
 @router.get('/status')
@@ -213,12 +214,14 @@ def create_client(req: ClientRequest, _: Auth):
     if result.returncode != 0:
         raise HTTPException(status_code=500, detail='Failed to create OpenVPN client certificate')
     client_dir.mkdir(parents=True)
-    endpoint = (BASE_DIR / 'endpoint').read_text().strip() if (BASE_DIR / 'endpoint').is_file() else 'REPLACE_WITH_NODE_HOST:1194'
+    meta = json.loads((BASE_DIR / 'server_meta.json').read_text()) if (BASE_DIR / 'server_meta.json').is_file() else {'protocol':'udp','endpoint':'REPLACE_WITH_NODE_HOST:1194'}
+    endpoint = str(meta.get('endpoint') or 'REPLACE_WITH_NODE_HOST:1194')
+    proto = str(meta.get('protocol') or 'udp')
     ca = (PKI_DIR / 'ca.crt').read_text()
     crt = (PKI_DIR / 'issued' / f'{name}.crt').read_text()
     key = (PKI_DIR / 'private' / f'{name}.key').read_text()
     config = (
-        'client\ndev tun\nproto udp\nremote ' + endpoint + '\n'
+        'client\ndev tun\nproto ' + proto + '\nremote ' + endpoint + '\n'
         'nobind\npersist-key\npersist-tun\nremote-cert-tls server\nauth SHA256\ncipher AES-256-GCM\ndata-ciphers AES-256-GCM:AES-128-GCM\nverb 3\n'
         '<ca>\n' + ca + '</ca>\n<cert>\n' + crt + '</cert>\n<key>\n' + key + '</key>\n'
     )
