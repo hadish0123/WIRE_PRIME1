@@ -7,13 +7,15 @@ export type Admin = {
   permissions: string[]
   node_ids: string[]
   is_active: boolean
+  user_quota: number
+  traffic_quota_gb: number
   created_at: string
   last_login_at: string | null
 }
 
 export const adminsApi = {
   list: () => req<Admin[]>('GET', '/admins'),
-  create: (body: { username: string; password: string; role: Admin['role']; permissions: string[]; node_ids: string[]; is_active: boolean }) =>
+  create: (body: { username: string; password: string; role: Admin['role']; permissions: string[]; node_ids: string[]; is_active: boolean; user_quota: number; traffic_quota_gb: number }) =>
     req<Admin>('POST', '/admins', body),
   update: (id: string, body: Partial<{ password: string; role: Admin['role']; permissions: string[]; node_ids: string[]; is_active: boolean }>) =>
     req<Admin>('PATCH', '/admins/' + id, body),
