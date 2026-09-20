@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import{computed,onMounted,ref}from"vue";
 import{auth,nodes,inbounds,clients,traffic,audit,quotas,admins,configs}from"./api";
-const sections=[["dashboard","داشبورد"],["nodes","نودها"],["inbounds","این‌باندها"],["clients","کلاینت‌ها"],["traffic","ترافیک و سهمیه"],["admins","مدیران و RBAC"],["audit","گزارش حسابرسی"],["settings","تنظیمات"]];
-const artifact=ref<any>(null),section=ref("dashboard"),email=ref(""),password=ref(""),mfaToken=ref(""),mfaCode=ref(""),loginError=ref(""),loading=ref(false),booting=ref(true),me=ref<any>(null),modal=ref<string|null>(null),notice=ref("");
+const sections=[["dashboard","داشبورد","Dashboard"],["nodes","نودها","Nodes"],["inbounds","این‌باندها","Inbounds"],["clients","کلاینت‌ها","Clients"],["traffic","ترافیک و سهمیه","Traffic & Usage"],["admins","مدیران و RBAC","Managers & RBAC"],["audit","گزارش حسابرسی","Audit Logs"],["settings","تنظیمات","Settings"]];
+const artifact=ref<any>(null),section=ref("dashboard"),lang=ref<"fa"|"en">("fa"),drawer=ref(false),email=ref(""),password=ref(""),mfaToken=ref(""),mfaCode=ref(""),loginError=ref(""),loading=ref(false),booting=ref(true),me=ref<any>(null),modal=ref<string|null>(null),notice=ref("");
 const nodeRows=ref<any[]>([]),inboundRows=ref<any[]>([]),clientRows=ref<any[]>([]),adminRows=ref<any[]>([]),auditRows=ref<any[]>([]),trafficData=ref<any>({});
 const nodeForm=ref({name:"",address:"",agent_url:""}),inboundForm=ref({node_id:"",name:"",protocol:"wireguard",listen_port:51820,interface:"wg0",address:"10.10.0.1/24",network:"10.10.0.0/24",dns:"1.1.1.1"}),clientForm=ref({inbound_id:"",name:"",assigned_address:"10.10.0.2/32"}),adminForm=ref({email:"",password:"",role:"tenant_operator"}),quotaForm=ref({client_id:"",total_bytes:"",daily_bytes:"",monthly_bytes:"",max_devices:"",warning_ratio:80});
-const title=computed(()=>sections.find(x=>x[0]===section.value)?.[1]??"داشبورد");
+const title=computed(()=>{const s=sections.find(x=>x[0]===section.value);return s?.[lang.value==="fa"?1:2]??(lang.value==="fa"?"داشبورد":"Dashboard")});
+const dir=computed(()=>lang.value==="fa"?"rtl":"ltr");
+const t=(fa:string,en:string)=>lang.value==="fa"?fa:en;
 async function load(){loading.value=true;try{me.value=await auth.me();const[n,i,c,t,a]=await Promise.all([nodes.list(),inbounds.list(),clients.list(),traffic.summary(),audit.list()]);nodeRows.value=n;inboundRows.value=i;clientRows.value=c;trafficData.value=t;if(me.value.role!=="tenant_operator")adminRows.value=await admins.list()}catch(e){if(localStorage.getItem("primevpn_access"))loginError.value=e instanceof Error?e.message:"خطای API"}finally{loading.value=false;booting.value=false}}
 async function login(){loginError.value="";loading.value=true;try{const r=await auth.login(email.value,password.value);if(r.mfa_required){mfaToken.value=r.mfa_token;modal.value="mfa";return}localStorage.setItem("primevpn_access",r.access_token);await load()}catch(e){loginError.value=e instanceof Error?e.message:"ورود ناموفق"}finally{loading.value=false}}
 async function verifyMfa(){try{const r=await auth.mfaVerify(mfaToken.value,mfaCode.value);localStorage.setItem("primevpn_access",r.access_token);modal.value=null;await load()}catch(e){loginError.value=e instanceof Error?e.message:"کد MFA نامعتبر"}}
