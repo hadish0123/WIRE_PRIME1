@@ -32,7 +32,7 @@ class ClientDetailOut(BaseModel):
  id:str;inbound_id:str;inbound_name:str;protocol:Protocol;node_id:str;node_name:str;listen_port:int
  name:str;status:ResourceState;assigned_address:str;expires_at:datetime|None;created_at:datetime
  traffic_in:int;traffic_out:int;total_traffic:int
- quota_total:int|None;quota_daily:int|None;quota_monthly:int|None;quota_used:int;quota_state:str|None;quota_warning_ratio:int|None;quota_expires_at:datetime|None
+ quota_total:int|None;quota_daily:int|None;quota_monthly:int|None;quota_used:int;quota_state:str|None;quota_warning_ratio:int|None;quota_expires_at:datetime|None;max_devices:int|None
  devices_count:int;online:bool;last_seen_at:datetime|None
 class DeviceOut(BaseModel):
  id:str;client_id:str;fingerprint:str;assigned_address:str|None;last_seen_at:datetime|None
