@@ -16,7 +16,7 @@ def safe_interface(v):
 def auth(token,scope="read"):
  if token and token.count(".")==2:
   claims=verify_control_token(token);require_scope(claims,scope);return
- if os.environ.get("PRIMEVPN_ALLOW_LEGACY_TOKEN","false").lower()=="true" and TOKEN and token==TOKEN:return
+
  raise HTTPException(401,"Agent authentication failed")
 def caps():return {"wireguard":shutil.which("wg") is not None,"amneziawg":shutil.which("awg") is not None,"openvpn":shutil.which("openvpn") is not None}
 def validate_config(data):
