@@ -17,6 +17,7 @@ from app.models import (
     LocalDeviceLimitUpdate,
     LocalUserLifecycle,
     LocalUserLifecycleUpdate,
+    Admin,
     Node,
     Peer,
     PeerBrief,
@@ -213,8 +214,16 @@ async def api_list_users(db: DB):
 @router.post('/users', response_model=UserSchema, status_code=201)
 async def api_add_user(data: UserIn, db: DB):
     """Create a local account. It starts empty: no devices, keys or peers, only its limit budget."""
+    owner_id = tenant_owner_for_create()
+    actor = __import__('app.routers.auth', fromlist=['current_admin']).current_admin()
+    if actor and actor.role != 'super_admin':
+        root = await db.get(Admin, owner_id)
+        if root and root.user_quota > 0:
+            count = await db.scalar(select(func.count(User.id)).where(User.owner_admin_id == owner_id))
+            if int(count or 0) >= root.user_quota:
+                raise HTTPException(status_code=403, detail='Your client quota has been reached')
     user = await create_local_user(db, data.name, device_limit=data.device_limit)
-    user.owner_admin_id = tenant_owner_for_create()
+    user.owner_admin_id = owner_id
     await db.commit()
     await db.refresh(user)
     return user
