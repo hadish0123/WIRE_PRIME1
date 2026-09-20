@@ -1,11 +1,14 @@
-from fastapi import APIRouter,Depends,HTTPException
-from ..services.audit import record
-from fastapi import Request
+from fastapi import APIRouter,Depends,HTTPException,Request
 from sqlalchemy.orm import Session
 from ..db import get_db
 from ..deps import current_admin
-from ..models import Admin,Client,Inbound,ResourceState
+from ..models import Admin,Client,Inbound,InboundOpenVPN,ClientCredential,ResourceState,Protocol,Node
 from ..schemas import ClientIn,ClientOut
+from ..services.audit import record
+from ..services.agent_client import revoke_wireguard_peer,deploy_openvpn_crl
+from ..services.openvpn_revoke import revoke_certificate
+from ..security import decrypt_secret
+import json
 router=APIRouter()
 @router.get("",response_model=list[ClientOut])
 def list_clients(admin:Admin=Depends(current_admin),db:Session=Depends(get_db)):
@@ -19,4 +22,16 @@ def create_client(data:ClientIn,request:Request,admin:Admin=Depends(current_admi
 def revoke(client_id:str,request:Request,admin:Admin=Depends(current_admin),db:Session=Depends(get_db)):
  c=db.query(Client).filter(Client.id==client_id,Client.tenant_id==admin.tenant_id).first()
  if not c:raise HTTPException(404,"Client not found")
- c.status=ResourceState.revoked;record(db,admin,request,"client.revoke","client",c.id);db.commit();return {"status":"revoked","client_id":c.id}
+ inbound=db.query(Inbound).filter(Inbound.id==c.inbound_id,Inbound.tenant_id==admin.tenant_id).first();node=db.query(Node).filter(Node.id==inbound.node_id).first() if inbound else None;cred=db.query(ClientCredential).filter(ClientCredential.client_id=c.id,ClientCredential.revoked_at.is_(None)).order_by(ClientCredential.created_at.desc()).first()
+ if inbound and node and node.agent_url and cred:
+  try:
+   if inbound.protocol in {Protocol.wireguard,Protocol.amneziawg}:revoke_wireguard_peer(node,inbound.interface,cred.public_identifier)
+   elif inbound.protocol==Protocol.openvpn:
+    ov=db.query(InboundOpenVPN).filter(InboundOpenVPN.inbound_id==inbound.id).first()
+    if ov and ov.ca_key_encrypted and ov.ca_pem:
+     material=json.loads(decrypt_secret(cred.encrypted_private_material));ov.crl_pem=revoke_certificate(ov.crl_pem,material["certificate"],decrypt_secret(ov.ca_key_encrypted),ov.ca_pem);deploy_openvpn_crl(node,inbound.interface,ov.crl_pem)
+  except Exception as e:raise HTTPException(502,f"Node revocation failed: {e}")
+ c.status=ResourceState.revoked
+ if cred:cred.revoked_at=__import__("datetime").datetime.now(__import__("datetime").timezone.utc)
+ record(db,admin,request,"client.revoke","client",c.id);db.commit()
+ return {"status":"revoked","client_id":c.id}
