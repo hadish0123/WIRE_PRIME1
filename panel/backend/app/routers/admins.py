@@ -76,18 +76,24 @@ async def create_admin(data: AdminIn, auth: dict = Depends(require_auth), db: As
     actor = auth['_admin']
     if data.role == 'super_admin' and not is_super_admin(actor):
         raise HTTPException(status_code=403, detail='Only super admin can create a super admin')
+    new_admin_id = str(uuid.uuid4())
     if data.role == 'super_admin':
-        tenant_id = actor.id
+        tenant_id = new_admin_id
+    elif is_super_admin(actor):
+        tenant_id = new_admin_id
     else:
         tenant_id = tenant_root(actor)
     if data.node_ids:
-        owned = set((await db.execute(select(Node.id).where(Node.id.in_(data.node_ids), Node.owner_admin_id == tenant_id))).scalars())
+        node_stmt = select(Node.id).where(Node.id.in_(data.node_ids))
+        if not is_super_admin(actor):
+            node_stmt = node_stmt.where(Node.owner_admin_id == tenant_id)
+        owned = set((await db.execute(node_stmt)).scalars())
         if set(data.node_ids) - owned:
             raise HTTPException(status_code=403, detail='One or more selected nodes are outside your tenant')
     if await db.scalar(select(Admin).where(Admin.username == data.username)):
         raise HTTPException(status_code=409, detail='Username already exists')
     admin = Admin(
-        id=str(uuid.uuid4()), username=data.username, password_hash=hash_password(data.password),
+        id=new_admin_id, username=data.username, password_hash=hash_password(data.password),
         role=data.role, permissions_json=json.dumps(sorted(set(data.permissions))),
         node_ids_json=json.dumps(sorted(set(data.node_ids))), is_active=data.is_active, tenant_owner_id=tenant_id, user_quota=data.user_quota, traffic_quota_bytes=int(data.traffic_quota_gb * 1024 * 1024 * 1024),
         created_at=datetime.now(UTC),
