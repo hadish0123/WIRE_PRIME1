@@ -10,7 +10,7 @@ def list_admins(admin:Admin=Depends(current_admin),db:Session=Depends(get_db)):
  q=db.query(Admin).filter(Admin.tenant_id==admin.tenant_id)
  return q.order_by(Admin.created_at.desc()).all()
 @router.post("")
-def create_admin(body:dict,admin:Admin=Depends(current_admin),db:Session=Depends(get_db)):
+def create_admin(body:dict,admin:Admin=Depends(require_tenant_manager),db:Session=Depends(get_db)):
  role=body.get("role",RoleName.tenant_operator.value)
  if role not in {RoleName.tenant_manager.value,RoleName.tenant_operator.value}:raise HTTPException(403,"Role exceeds tenant scope")
  email=str(body.get("email","")).lower().strip();password=str(body.get("password",""))
