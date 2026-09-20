@@ -4,7 +4,10 @@
   </template>
   <template v-else>
     <div class="layout">
-      <aside class="topbar">
+      <button class="menu-fab" type="button" aria-label="Menu" @click="menuOpen = !menuOpen">
+        <i class="pi pi-ellipsis-v" />
+      </button>
+      <aside class="topbar" :class="{ 'is-open': menuOpen }">
         <div class="sidebar-head">
         <div class="brand-block">
           <span class="brand-mark">PRIME</span>
@@ -45,7 +48,6 @@
           />
         </div>
         <div class="sidebar-menu-title">MENU</div>
-        <Button class="menu-toggle" icon="pi pi-ellipsis-v" text rounded aria-label="Menu" @click="menuOpen = !menuOpen" />
         <nav v-if="menuOpen" :aria-label="$t('navigation.menu')">
           <RouterLink to="/openvpn"
             ><i class="pi pi-lock" /> {{ $t('navigation.openvpn') }}</RouterLink
@@ -94,7 +96,7 @@ const { t } = useI18n()
 const isLoginPage = computed(() => route.path === '/login')
 
 const isDark = ref(true)
-const menuOpen = ref(true)
+const menuOpen = ref(false)
 
 const currentLocale = computed(() => i18n.global.locale.value)
 
@@ -186,16 +188,17 @@ body::before {
 }
 
 .layout {
-  display: grid;
-  grid-template-columns: 17rem minmax(0, 1fr);
   min-height: 100vh;
 }
 
 .topbar {
   display: flex;
-  position: sticky;
+  position: fixed;
   top: 0;
-  z-index: 10;
+  left: 0;
+  z-index: 100;
+  width: 17rem;
+  height: 100vh;
   flex-direction: column;
   align-items: center;
   gap: var(--app-space-4);
@@ -208,8 +211,39 @@ body::before {
   );
   border-right: 1px solid var(--app-border-strong);
   backdrop-filter: blur(18px) saturate(130%);
-  box-shadow: 1px 0 0 rgba(255, 255, 255, 0.04);
+  box-shadow: 18px 0 45px rgba(0, 0, 0, 0.24);
+  transform: translateX(-105%);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: transform .2s ease, opacity .2s ease, visibility .2s ease;
 }
+
+.topbar.is-open {
+  transform: translateX(0);
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.menu-fab {
+  position: fixed;
+  top: 1rem;
+  left: 1rem;
+  z-index: 110;
+  width: 2.7rem;
+  height: 2.7rem;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--app-border-strong);
+  border-radius: 12px;
+  background: var(--app-shell-solid);
+  color: var(--app-text);
+  cursor: pointer;
+  box-shadow: 0 10px 28px rgba(0,0,0,.2);
+}
+
+.menu-fab:hover { background: var(--app-hover); }
 
 .sidebar-head { display:flex; align-items:center; gap:.75rem; width:100%; }
 
@@ -421,34 +455,13 @@ nav a.router-link-active {
 }
 
 @media (max-width: 760px) {
-  .layout {
-    display: block;
-  }
-
   .topbar {
-    position: sticky;
-    min-height: 4rem;
-    flex-direction: row;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 0.7rem 1rem;
-    padding: 4rem 1rem .75rem;
-    border-right: none;
-    border-bottom: 1px solid var(--app-border-strong);
-  }
-
-  .brand-block {
-    flex: 1 1 auto;
-    min-width: 12rem;
+    width: min(17rem, 88vw);
   }
 
   nav {
-    order: 3;
-    width: 100%;
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    overflow: visible;
-    padding-bottom: 0.1rem;
+    width: 100%;
   }
 
   nav a {
