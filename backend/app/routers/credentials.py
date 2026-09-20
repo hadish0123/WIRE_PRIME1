@@ -3,7 +3,7 @@ from fastapi import APIRouter,Depends,HTTPException
 from sqlalchemy.orm import Session
 from ..db import get_db
 from ..deps import current_admin,require_tenant_manager
-from ..models import Admin,Client,Device,Inbound,InboundOpenVPN,InboundWireGuard,ClientCredential,Protocol,Node
+from ..models import Admin,Client,Device,Inbound,InboundOpenVPN,InboundWireGuard,ClientCredential,Protocol,Node,Quota,TrafficUsage
 from ..security import encrypt_secret,decrypt_secret
 from ..services.credentials import wg_keypair,openvpn_ca,openvpn_server,openvpn_client,openvpn_tls_crypt_key,fingerprint
 from ..services.config_artifacts import create_artifact
@@ -27,6 +27,19 @@ def allocate_device_address(db,client):
 def issue(client_id:str,admin:Admin=Depends(require_tenant_manager),db:Session=Depends(get_db)):
  c=db.query(Client).filter(Client.id==client_id,Client.tenant_id==admin.tenant_id).first()
  if not c:raise HTTPException(404,"Client not found")
+ now=__import__("datetime").datetime.now(__import__("datetime").timezone.utc)
+ client_exp=c.expires_at
+ if client_exp and client_exp.tzinfo is None:client_exp=client_exp.replace(tzinfo=__import__("datetime").timezone.utc)
+ if c.status.value!="ACTIVE":raise HTTPException(409,"Client is not active")
+ if client_exp and client_exp<=now:raise HTTPException(409,"Client has expired")
+ q=db.query(Quota).filter(Quota.client_id==c.id,Quota.tenant_id==admin.tenant_id).first()
+ if q:
+  qexp=q.expires_at
+  if qexp and qexp.tzinfo is None:qexp=qexp.replace(tzinfo=__import__("datetime").timezone.utc)
+  used=int(db.query(__import__("sqlalchemy").func.coalesce(__import__("sqlalchemy").func.sum(TrafficUsage.bytes_in+TrafficUsage.bytes_out),0)).filter(TrafficUsage.client_id==c.id,TrafficUsage.tenant_id==admin.tenant_id).scalar() or 0)
+  if qexp and qexp<=now:raise HTTPException(409,"Client quota has expired")
+  if q.total_bytes is not None and used>=q.total_bytes:raise HTTPException(409,"Client traffic quota is exhausted")
+  if q.max_devices is not None and db.query(Device).filter(Device.client_id==c.id,Device.tenant_id==admin.tenant_id).count()>=q.max_devices:raise HTTPException(409,"Maximum device limit reached")
  inbound=db.query(Inbound).filter(Inbound.id==c.inbound_id,Inbound.tenant_id==admin.tenant_id).first()
  if not inbound:raise HTTPException(404,"Inbound not found")
  node=db.query(Node).filter(Node.id==inbound.node_id,Node.tenant_id==admin.tenant_id).first()
