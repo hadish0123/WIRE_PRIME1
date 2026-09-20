@@ -4,7 +4,7 @@ from fastapi import FastAPI,Header,HTTPException
 from pydantic import BaseModel,Field
 from agent_security import verify_control_token,require_scope
 VERSION="100.0.0"
-TOKEN=os.environ.get("PRIMEVPN_AGENT_TOKEN","")
+
 app=FastAPI(title="PRIMEVPN Node Agent",version=VERSION)
 class ApplyConfig(BaseModel):
  protocol:str
@@ -25,7 +25,7 @@ def validate_config(data):
  if data.protocol=="openvpn" and shutil.which("openvpn"):
   fd,path=tempfile.mkstemp(prefix="primevpn-",suffix=".conf");os.close(fd)
   try:
-   open(path,"w",encoding="utf-8").write(data.config)
+   with open(path,"w",encoding="utf-8") as f:f.write(data.config)
    p=subprocess.run(["openvpn","--config",path,"--test-crypto"],capture_output=True,text=True,timeout=20)
    if p.returncode and "test-crypto" not in (p.stderr or ""):raise HTTPException(422,p.stderr.strip() or "OpenVPN configuration rejected")
   finally: 
