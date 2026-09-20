@@ -31,6 +31,18 @@ def _state(q,total,daily,monthly,now):
     if any(limit and used>=limit*q.warning_ratio/100 for limit,used in limits):return "WARNING"
     return "NORMAL"
 
+@router.get("/overview/all")
+def quota_overview(admin:Admin=Depends(current_admin),db:Session=Depends(get_db)):
+    now=datetime.now(timezone.utc);items=[]
+    for q in db.query(Quota).filter(Quota.tenant_id==admin.tenant_id).all():
+        c=db.query(Client).filter(Client.id==q.client_id,Client.tenant_id==admin.tenant_id).first()
+        if not c:continue
+        total,daily,monthly=_usage(db,q,now);state=_state(q,total,daily,monthly,now);q.state=state
+        def pct(used,limit):return None if not limit else min(100,round(used/limit*100,1))
+        items.append({"client_id":c.id,"client_name":c.name,"state":state,"used_bytes":total,"daily_used_bytes":daily,"monthly_used_bytes":monthly,"total_bytes":q.total_bytes,"daily_bytes":q.daily_bytes,"monthly_bytes":q.monthly_bytes,"total_pct":pct(total,q.total_bytes),"daily_pct":pct(daily,q.daily_bytes),"monthly_pct":pct(monthly,q.monthly_bytes),"warning_ratio":q.warning_ratio,"max_devices":q.max_devices,"expires_at":q.expires_at})
+    db.commit();items.sort(key=lambda x:(x["state"]!="LIMIT_REACHED",x["state"]!="WARNING",x["client_name"].lower()))
+    return items
+
 @router.get("/{client_id}")
 def get_quota(client_id:str,admin:Admin=Depends(current_admin),db:Session=Depends(get_db)):
     q=db.query(Quota).filter(Quota.client_id==client_id,Quota.tenant_id==admin.tenant_id).first()
@@ -55,14 +67,3 @@ def quota_state(client_id:str,admin:Admin=Depends(current_admin),db:Session=Depe
     now=datetime.now(timezone.utc);total,daily,monthly=_usage(db,q,now);state=_state(q,total,daily,monthly,now);q.state=state;db.commit()
     return {"state":state,"used_bytes":total,"daily_used_bytes":daily,"monthly_used_bytes":monthly,"total_bytes":q.total_bytes,"daily_bytes":q.daily_bytes,"monthly_bytes":q.monthly_bytes,"warning_ratio":q.warning_ratio,"expires_at":q.expires_at,"max_devices":q.max_devices}
 
-@router.get("/overview/all")
-def quota_overview(admin:Admin=Depends(current_admin),db:Session=Depends(get_db)):
-    now=datetime.now(timezone.utc);items=[]
-    for q in db.query(Quota).filter(Quota.tenant_id==admin.tenant_id).all():
-        c=db.query(Client).filter(Client.id==q.client_id,Client.tenant_id==admin.tenant_id).first()
-        if not c:continue
-        total,daily,monthly=_usage(db,q,now);state=_state(q,total,daily,monthly,now);q.state=state
-        def pct(used,limit):return None if not limit else min(100,round(used/limit*100,1))
-        items.append({"client_id":c.id,"client_name":c.name,"state":state,"used_bytes":total,"daily_used_bytes":daily,"monthly_used_bytes":monthly,"total_bytes":q.total_bytes,"daily_bytes":q.daily_bytes,"monthly_bytes":q.monthly_bytes,"total_pct":pct(total,q.total_bytes),"daily_pct":pct(daily,q.daily_bytes),"monthly_pct":pct(monthly,q.monthly_bytes),"warning_ratio":q.warning_ratio,"max_devices":q.max_devices,"expires_at":q.expires_at})
-    db.commit();items.sort(key=lambda x:(x["state"]!="LIMIT_REACHED",x["state"]!="WARNING",x["client_name"].lower()))
-    return items
