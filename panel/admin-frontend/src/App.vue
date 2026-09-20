@@ -43,6 +43,9 @@
           />
         </div>
         <nav :aria-label="$t('navigation.menu')">
+          <RouterLink to="/openvpn"
+            ><i class="pi pi-lock" /> OpenVPN</RouterLink
+          >
           <RouterLink to="/admins"
             ><i class="pi pi-shield" /> Admins</RouterLink
           >
