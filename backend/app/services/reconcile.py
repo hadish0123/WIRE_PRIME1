@@ -1,6 +1,6 @@
 import json
 from sqlalchemy.orm import Session
-from ..models import Node,Inbound,Client,ClientCredential,InboundWireGuard,InboundOpenVPN,Protocol,NodeState
+from ..models import Node,Inbound,Client,ClientCredential,Device,InboundWireGuard,InboundOpenVPN,Protocol,NodeState
 from ..security import decrypt_secret
 
 def _wg_config(node,inbound,db):
@@ -29,9 +29,11 @@ def _wg_config(node,inbound,db):
             f"H4 = {cfg.amnezia_h4}",
         ]
     for client in db.query(Client).filter(Client.inbound_id==inbound.id,Client.tenant_id==node.tenant_id,Client.status=="ACTIVE").all():
-        cred=db.query(ClientCredential).filter(ClientCredential.client_id==client.id,ClientCredential.revoked_at.is_(None)).order_by(ClientCredential.created_at.desc()).first()
-        if not cred: continue
-        lines += ["","[Peer]",f"PublicKey = {cred.public_identifier}",f"AllowedIPs = {client.assigned_address}"]
+        cred=db.query(ClientCredential).filter(ClientCredential.client_id==client.id,ClientCredential.revoked_at.is_(None)).order_by(ClientCredential.created_at.desc()).all()
+        for credential in cred:
+            device=db.query(Device).filter(Device.id==credential.device_id,Device.client_id==client.id).first() if credential.device_id else None
+            allowed=device.assigned_address if device and device.assigned_address else client.assigned_address
+            lines += ["","[Peer]",f"PublicKey = {credential.public_identifier}",f"AllowedIPs = {allowed}"]
     return "\n".join(lines)+"\n"
 
 def _openvpn_config(node,inbound,db):
