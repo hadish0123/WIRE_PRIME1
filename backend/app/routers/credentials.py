@@ -3,7 +3,7 @@ from fastapi import APIRouter,Depends,HTTPException
 from sqlalchemy.orm import Session
 from ..db import get_db
 from ..deps import current_admin
-from ..models import Admin,Client,Inbound,InboundOpenVPN,InboundWireGuard,ClientCredential,Protocol
+from ..models import Admin,Client,Inbound,InboundOpenVPN,InboundWireGuard,ClientCredential,Protocol,Node
 from ..security import encrypt_secret,decrypt_secret
 from ..services.credentials import wg_keypair,openvpn_ca,openvpn_server,openvpn_client,fingerprint
 from ..services.config_artifacts import create_artifact
@@ -13,13 +13,13 @@ def issue(client_id:str,admin:Admin=Depends(current_admin),db:Session=Depends(ge
  c=db.query(Client).filter(Client.id==client_id,Client.tenant_id==admin.tenant_id).first()
  if not c:raise HTTPException(404,"Client not found")
  inbound=db.query(Inbound).filter(Inbound.id==c.inbound_id,Inbound.tenant_id==admin.tenant_id).first()
- if not inbound:raise HTTPException(404,"Inbound not found")
+ if not inbound:raise HTTPException(404,"Inbound not found")\n node=db.query(Node).filter(Node.id==inbound.node_id,Node.tenant_id==admin.tenant_id).first()\n if not node:raise HTTPException(404,"Node not found")
  if inbound.protocol in {Protocol.wireguard,Protocol.amneziawg}:
   private,public=wg_keypair();identifier=public
   existing=db.query(InboundWireGuard).filter(InboundWireGuard.inbound_id==inbound.id).first()
   if not existing:raise HTTPException(409,"WireGuard inbound keys are not initialized")
   material={"private_key":private}
-  payload=f"[Interface]\nPrivateKey = {private}\nAddress = {c.assigned_address}\nDNS = {inbound.dns or '1.1.1.1'}\n\n[Peer]\nPublicKey = {existing.server_public_key}\nAllowedIPs = 0.0.0.0/0, ::/0\nEndpoint = {inbound.address}:{inbound.listen_port}\n"
+  payload=f"[Interface]\nPrivateKey = {private}\nAddress = {c.assigned_address}\nDNS = {inbound.dns or '1.1.1.1'}\n\n[Peer]\nPublicKey = {existing.server_public_key}\nAllowedIPs = 0.0.0.0/0, ::/0\nEndpoint = {node.address}:{inbound.listen_port}\n"
  else:
   ov=db.query(InboundOpenVPN).filter(InboundOpenVPN.inbound_id==inbound.id).first()
   if not ov:raise HTTPException(409,"OpenVPN inbound is not initialized")
