@@ -1,27 +1,35 @@
 name: PRIMEVPN CI
-on: {push: {branches: ["**"]}, pull_request: {}}
+on:
+ push:
+  branches: ["**"]
+ pull_request:
 jobs:
  backend:
   runs-on: ubuntu-latest
-  defaults: {run: {working-directory: backend}}
+  defaults:
+   run: {working-directory: backend}
   steps:
    - uses: actions/checkout@v4
    - uses: actions/setup-python@v5
      with: {python-version: "3.12"}
    - run: pip install -e ".[test]"
-   - run: python -m compileall app tests\n   - run: pytest
+   - run: python -m compileall app tests
+   - run: pytest
  frontend:
   runs-on: ubuntu-latest
-  defaults: {run: {working-directory: frontend}}
+  defaults:
+   run: {working-directory: frontend}
   steps:
    - uses: actions/checkout@v4
    - uses: actions/setup-node@v4
      with: {node-version: "22"}
    - run: npm install
-   - run: npm run typecheck\n   - run: npm run build
+   - run: npm run typecheck
+   - run: npm run build
  node_agent:
   runs-on: ubuntu-latest
-  defaults: {run: {working-directory: node-agent}}
+  defaults:
+   run: {working-directory: node-agent}
   steps:
    - uses: actions/checkout@v4
    - uses: actions/setup-python@v5
