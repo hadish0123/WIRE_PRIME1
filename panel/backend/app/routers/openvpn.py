@@ -3,7 +3,7 @@ from __future__ import annotations
 import ipaddress
 import re
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Response
@@ -26,9 +26,11 @@ class ServerIn(BaseModel):
     network: str = Field(default='10.9.0.0/24')
 
 class ClientIn(BaseModel):
-    user_id: str
+    user_id: str | None = None
     node_id: str
     name: str = Field(min_length=1, max_length=32)
+    traffic_gb: float = Field(default=0, ge=0, le=1000000)
+    days: int = Field(default=0, ge=0, le=3650)
 
 def _guard(auth: dict, permission: str) -> None:
     if not has_permission(auth['_admin'], permission):
@@ -79,10 +81,19 @@ async def create_client(data: ClientIn, auth: dict = Depends(require_auth), db: 
     _guard(auth, 'openvpn.manage')
     if not NAME_RE.fullmatch(data.name):
         raise HTTPException(status_code=400, detail='Invalid OpenVPN client name')
-    user = await db.get(User, data.user_id)
     node = await db.get(Node, data.node_id)
-    if not user or not node:
-        raise HTTPException(status_code=404, detail='User or node not found')
+    if not node:
+        raise HTTPException(status_code=404, detail='Node not found')
+    user = await db.get(User, data.user_id) if data.user_id else None
+    if user is None:
+        user = await db.scalar(select(User).where(User.name == data.name))
+        if user is None:
+            user = User(name=data.name)
+            db.add(user)
+            await db.flush()
+    user.traffic_limit_bytes = int(data.traffic_gb * 1024 * 1024 * 1024) if data.traffic_gb > 0 else 0
+    user.expire_at = datetime.now(UTC) + timedelta(days=data.days) if data.days > 0 else None
+    user.lifecycle_status = 'active'
     existing = await db.scalar(select(OpenVPNClient).where(OpenVPNClient.node_id == node.id, OpenVPNClient.name == data.name))
     if existing:
         raise HTTPException(status_code=409, detail='OpenVPN client already exists')
@@ -91,7 +102,7 @@ async def create_client(data: ClientIn, auth: dict = Depends(require_auth), db: 
     db.add(client)
     await db.commit()
     await db.refresh(client)
-    return {'id': client.id, 'user_id': client.user_id, 'node_id': client.node_id, 'name': client.name, 'status': client.status, 'node_result': response.json()}
+    return {'id': client.id, 'user_id': client.user_id, 'node_id': client.node_id, 'name': client.name, 'status': client.status, 'traffic_gb': data.traffic_gb, 'days': data.days, 'node_result': response.json()}
 
 @router.get('/clients')
 async def list_clients(auth: dict = Depends(require_auth), db: AsyncSession = Depends(get_db)):
