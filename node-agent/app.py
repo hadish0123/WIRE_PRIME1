@@ -61,8 +61,13 @@ def apply(data:ApplyConfig,x_agent_token:str|None=Header(default=None)):
   if data.protocol in {"wireguard","amneziawg"}:
    tool="wg-quick" if data.protocol=="wireguard" else "awg-quick"
    if not shutil.which(tool):raise RuntimeError(f"{tool} unavailable")
-   subprocess.run([tool,"down",path],capture_output=True,text=True,timeout=20)
-   subprocess.run([tool,"up",path],capture_output=True,text=True,timeout=20,check=True)
+   if data.protocol=="wireguard" and shutil.which("wg") and shutil.which("wg-quick") and os.path.exists(f"/sys/class/net/{name}"):
+    stripped=subprocess.run(["wg-quick","strip",path],capture_output=True,text=True,timeout=20,check=True)
+    subprocess.run(["wg","syncconf",name,"/dev/stdin"],input=stripped.stdout,capture_output=True,text=True,timeout=20,check=True)
+   else:
+    if os.path.exists(f"/sys/class/net/{name}"):
+     subprocess.run([tool,"down",path],capture_output=True,text=True,timeout=20)
+    subprocess.run([tool,"up",path],capture_output=True,text=True,timeout=20,check=True)
   elif data.protocol=="openvpn":
    if not shutil.which("systemctl"):raise RuntimeError("systemctl unavailable")
    server_dir="/etc/openvpn/server";os.makedirs(server_dir,mode=0o700,exist_ok=True)
