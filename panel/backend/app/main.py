@@ -2,6 +2,7 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from sqlalchemy import select, text
 
 from .database import AsyncSessionLocal, ensure_tenant_schema
 from .error_handlers import register_error_handlers
@@ -17,9 +18,9 @@ async def lifespan(_app: FastAPI):
     async with AsyncSessionLocal() as db:
         await auth.bootstrap_admin(db)
         # Migrate pre-tenant records into the platform owner's tenant.
-        owner = await db.scalar(__import__('sqlalchemy').select(auth.Admin).where(auth.Admin.role == 'super_admin').order_by(auth.Admin.created_at))
+        owner = await db.scalar(select(auth.Admin).where(auth.Admin.role == 'super_admin').order_by(auth.Admin.created_at))
         if owner:
-            await db.execute(__import__('sqlalchemy').text("UPDATE admins SET tenant_owner_id=:o WHERE tenant_owner_id IS NULL"), {'o': owner.id})
+            await db.execute(text("UPDATE admins SET tenant_owner_id=:o WHERE tenant_owner_id IS NULL"), {'o': owner.id})
             await db.execute(__import__('sqlalchemy').text("UPDATE nodes SET owner_admin_id=:o WHERE owner_admin_id IS NULL"), {'o': owner.id})
             await db.execute(__import__('sqlalchemy').text("UPDATE users SET owner_admin_id=:o WHERE owner_admin_id IS NULL"), {'o': owner.id})
             await db.execute(__import__('sqlalchemy').text("UPDATE openvpn_clients SET owner_admin_id=:o WHERE owner_admin_id IS NULL"), {'o': owner.id})
