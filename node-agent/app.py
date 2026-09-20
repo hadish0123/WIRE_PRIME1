@@ -33,6 +33,10 @@ def validate_config(data):
    try:os.unlink(path)
    except FileNotFoundError:pass
  return {"valid":True,"protocol":data.protocol,"interface":data.interface}
+@app.get("/healthz")
+def healthz():
+ return {"status":"ok","version":VERSION}
+
 @app.get("/health")
 def health(x_agent_token:str|None=Header(default=None)):
  auth(x_agent_token,"read")
