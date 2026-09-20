@@ -33,11 +33,11 @@ export const clients={
  credential:(id:string)=>api<any>("/credentials/"+id+"/credentials",{method:"POST"})
 };
 export const configs={download:(id:string)=>api<any>("/configs/"+id)};
-export const traffic={summary:()=>api<any>("/traffic/summary")};
+export const traffic={summary:(days=7)=>api<any>("/traffic/summary?days="+days),breakdown:(days=7,params="")=>api<any>("/traffic/breakdown?days="+days+(params?"&"+params:"")),timeseries:(days=7)=>api<any[]>("/traffic/timeseries?days="+days),collect:()=>api<any>("/traffic/collect",{method:"POST"})};
 export const quotas={
  state:(id:string)=>api<any>("/quotas/"+id+"/state"),
  get:(id:string)=>api<any>("/quotas/"+id),
- set:(body:unknown)=>api<any>("/quotas",{method:"POST",body:JSON.stringify(body)})
+ set:(body:unknown)=>api<any>("/quotas",{method:"POST",body:JSON.stringify(body)}),overview:()=>api<any[]>("/quotas/overview/all")
 };
 export const audit={list:()=>api<any[]>("/audit")};
 export const admins={list:()=>api<any[]>("/admins"),create:(body:unknown)=>api<any>("/admins",{method:"POST",body:JSON.stringify(body)})};
