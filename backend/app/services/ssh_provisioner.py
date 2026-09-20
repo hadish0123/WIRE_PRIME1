@@ -63,7 +63,7 @@ WantedBy=multi-user.target
 EOF
 systemctl daemon-reload
 systemctl enable --now primevpn-node-agent.service
-printf 'PORT=%s\\n' "${PORT}"
+printf 'PORT=%s\\n' "${{PORT}}"
 systemctl is-active --quiet primevpn-node-agent.service
 '''
     try:
