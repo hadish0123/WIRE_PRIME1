@@ -495,6 +495,8 @@ async function saveDeviceLimit(user: User, deviceLimit: number) {
   color: var(--app-red);
 }
 
+.client-dialog-form{display:grid;gap:1rem}.client-dialog-form label{display:grid;gap:.4rem;color:var(--app-text-muted);font-weight:800;font-size:.8rem}.client-dialog-form input,.client-dialog-form select{width:100%;padding:.68rem;border:1px solid var(--app-border-strong);border-radius:10px;background:var(--app-surface-raised);color:var(--app-text)}.dialog-footer{display:flex;justify-content:flex-end;gap:.5rem;padding-top:.5rem;border-top:1px solid var(--app-border)}
+
 .user-create-card {
   align-self: end;
 }
