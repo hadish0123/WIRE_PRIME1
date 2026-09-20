@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from ..db import get_db
-from ..deps import current_admin, require_tenant_manager
+from ..deps import current_admin, require_tenant_manager, can_access_client, representative_can_use_inbound
 from ..models import Admin, Client, Device, Inbound, InboundOpenVPN, ClientCredential, ResourceState, Protocol, Node, TrafficUsage, TrafficSnapshot, Session as ClientSession, Quota
 from ..schemas import ClientIn, ClientOut, ClientDetailOut, ClientUpdateIn, DeviceOut
 from ..services.audit import record
@@ -70,7 +70,10 @@ def _detail(db,c,now):
 
 @router.get("",response_model=list[ClientDetailOut])
 def list_clients(search:str|None=Query(default=None,max_length=100),status:str|None=Query(default=None,max_length=30),inbound_id:str|None=None,protocol:Protocol|None=None,online:bool|None=None,admin:Admin=Depends(current_admin),db:Session=Depends(get_db)):
- rows=db.query(Client).filter(Client.tenant_id==admin.tenant_id).order_by(Client.created_at.desc()).all()
+ q=db.query(Client)
+ if admin.role!=RoleName.platform_owner:q=q.filter(Client.tenant_id==admin.tenant_id)
+ if admin.role==RoleName.representative:q=q.filter(Client.created_by_admin_id==admin.id)
+ rows=q.order_by(Client.created_at.desc()).all()
  now=datetime.now(timezone.utc)
  result=[_detail(db,c,now) for c in rows]
  if search:
@@ -84,31 +87,34 @@ def list_clients(search:str|None=Query(default=None,max_length=100),status:str|N
 
 @router.post("",response_model=ClientOut)
 def create_client(data:ClientIn,request:Request,admin:Admin=Depends(require_tenant_manager),db:Session=Depends(get_db)):
- inbound=db.query(Inbound).filter(Inbound.id==data.inbound_id,Inbound.tenant_id==admin.tenant_id).first()
+ inbound_q=db.query(Inbound).filter(Inbound.id==data.inbound_id)
+ if admin.role!=RoleName.platform_owner:inbound_q=inbound_q.filter(Inbound.tenant_id==admin.tenant_id)
+ inbound=inbound_q.first()
  if not inbound:raise HTTPException(404,"Inbound not found")
+ if not representative_can_use_inbound(db,admin,inbound.id):raise HTTPException(403,"Inbound is not assigned to this representative")
  expires=_normalize_expiry(data.expires_at)
  if expires and expires<=datetime.now(timezone.utc):raise HTTPException(422,"Client expiry must be in the future")
  _validate_address(inbound,data.assigned_address)
  if db.query(Client).filter(Client.inbound_id==inbound.id,Client.assigned_address==data.assigned_address,Client.tenant_id==admin.tenant_id).first():raise HTTPException(409,"Assigned address already in use")
  if db.query(Client).filter(Client.inbound_id==inbound.id,Client.name==data.name,Client.tenant_id==admin.tenant_id).first():raise HTTPException(409,"Client name already exists on this inbound")
- c=Client(tenant_id=admin.tenant_id,inbound_id=data.inbound_id,name=data.name,assigned_address=data.assigned_address,expires_at=expires)
+ c=Client(tenant_id=inbound.tenant_id,inbound_id=data.inbound_id,created_by_admin_id=admin.id,name=data.name,assigned_address=data.assigned_address,expires_at=expires)
  db.add(c);db.flush()
  if any(v is not None for v in (data.total_bytes,data.daily_bytes,data.monthly_bytes,data.max_devices)) or expires:
-  q=Quota(tenant_id=admin.tenant_id,client_id=c.id,total_bytes=data.total_bytes,daily_bytes=data.daily_bytes,monthly_bytes=data.monthly_bytes,max_devices=data.max_devices,warning_ratio=data.warning_ratio,expires_at=expires)
+  q=Quota(tenant_id=c.tenant_id,client_id=c.id,total_bytes=data.total_bytes,daily_bytes=data.daily_bytes,monthly_bytes=data.monthly_bytes,max_devices=data.max_devices,warning_ratio=data.warning_ratio,expires_at=expires)
   db.add(q)
  record(db,admin,request,"client.create","client",c.id);db.commit();db.refresh(c);return c
 
 @router.patch("/{client_id}",response_model=ClientOut)
 def update_client(client_id:str,data:ClientUpdateIn,request:Request,admin:Admin=Depends(require_tenant_manager),db:Session=Depends(get_db)):
- c=db.query(Client).filter(Client.id==client_id,Client.tenant_id==admin.tenant_id).first()
- if not c:raise HTTPException(404,"Client not found")
+ c=db.query(Client).filter(Client.id==client_id).first()
+ if not can_access_client(db,admin,c):raise HTTPException(404,"Client not found")
  if c.status==ResourceState.revoked:raise HTTPException(409,"Revoked client cannot be edited")
  expires=_normalize_expiry(data.expires_at) if data.expires_at is not None else c.expires_at
  if expires and expires<=datetime.now(timezone.utc):raise HTTPException(422,"Client expiry must be in the future")
  if data.name and db.query(Client).filter(Client.inbound_id==c.inbound_id,Client.name==data.name,Client.id!=c.id,Client.tenant_id==admin.tenant_id).first():raise HTTPException(409,"Client name already exists on this inbound")
  if data.name is not None:c.name=data.name
  if data.expires_at is not None:c.expires_at=expires
- q=db.query(Quota).filter(Quota.client_id==c.id,Quota.tenant_id==admin.tenant_id).first()
+ q=db.query(Quota).filter(Quota.client_id==c.id,Quota.tenant_id==c.tenant_id).first()
  quota_fields=any(v is not None for v in (data.total_bytes,data.daily_bytes,data.monthly_bytes,data.max_devices,data.warning_ratio))
  if quota_fields or data.expires_at is not None:
   if not q:q=Quota(tenant_id=admin.tenant_id,client_id=c.id);db.add(q)
@@ -123,8 +129,8 @@ def update_client(client_id:str,data:ClientUpdateIn,request:Request,admin:Admin=
 
 @router.get("/{client_id}/devices",response_model=list[DeviceOut])
 def list_devices(client_id:str,admin:Admin=Depends(current_admin),db:Session=Depends(get_db)):
- c=db.query(Client).filter(Client.id==client_id,Client.tenant_id==admin.tenant_id).first()
- if not c:raise HTTPException(404,"Client not found")
+ c=db.query(Client).filter(Client.id==client_id).first()
+ if not can_access_client(db,admin,c):raise HTTPException(404,"Client not found")
  return db.query(Device).filter(Device.client_id==c.id,Device.tenant_id==admin.tenant_id).order_by(Device.last_seen_at.desc().nullslast()).all()
 
 @router.post("/{client_id}/revoke")
