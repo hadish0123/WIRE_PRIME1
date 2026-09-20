@@ -1,0 +1,92 @@
+from __future__ import annotations
+import asyncssh
+import httpx
+import shlex
+
+AGENT_REF="1c3f0d638177f13e3c60ffc8f275167cba8dd7e4"
+RAW_BASE=f"https://raw.githubusercontent.com/hadish0123/WIRE_PRIME1/{AGENT_REF}/node-agent"
+
+class SSHProvisionError(RuntimeError):
+    pass
+
+def _q(v:str)->str:
+    return shlex.quote(v)
+
+async def install_node_agent(host:str,port:int,username:str,password:str,node_id:str,verify_key:str)->dict:
+    if not host or any(c in host for c in "\n\r"):
+        raise SSHProvisionError("Invalid server address")
+    script=f'''set -eu
+export DEBIAN_FRONTEND=noninteractive
+if command -v apt-get >/dev/null 2>&1; then
+  apt-get update -y
+  apt-get install -y python3 python3-venv python3-pip curl openssl wireguard-tools openvpn
+elif command -v dnf >/dev/null 2>&1; then
+  dnf install -y python3 python3-pip curl openssl wireguard-tools openvpn
+elif command -v yum >/dev/null 2>&1; then
+  yum install -y python3 python3-pip curl openssl wireguard-tools openvpn
+else
+  echo "Unsupported Linux distribution" >&2
+  exit 20
+fi
+mkdir -p /opt/primevpn-node-agent /etc/primevpn
+python3 -m venv /opt/primevpn-node-agent/venv
+/opt/primevpn-node-agent/venv/bin/pip install --upgrade pip
+curl -fsSL {_q(RAW_BASE+"/pyproject.toml")} -o /opt/primevpn-node-agent/pyproject.toml
+curl -fsSL {_q(RAW_BASE+"/app.py")} -o /opt/primevpn-node-agent/app.py
+curl -fsSL {_q(RAW_BASE+"/agent_security.py")} -o /opt/primevpn-node-agent/agent_security.py
+/opt/primevpn-node-agent/venv/bin/pip install --no-cache-dir fastapi 'uvicorn[standard]' pydantic 'PyJWT[crypto]' cryptography
+PORT=443
+if ss -ltn 2>/dev/null | grep -qE '[:.]443[[:space:]]'; then PORT=9443; fi
+openssl req -x509 -nodes -newkey ed25519 -days 825 -keyout /etc/primevpn/agent.key -out /etc/primevpn/agent.crt -subj {_q("/CN="+host)} -addext {_q("subjectAltName=IP:"+host)}
+chmod 600 /etc/primevpn/agent.key
+cat > /etc/primevpn/agent.env <<EOF
+PRIMEVPN_AGENT_VERIFY_PUBLIC_KEY={_q(verify_key)}
+PRIMEVPN_NODE_ID={_q(node_id)}
+EOF
+chmod 600 /etc/primevpn/agent.env
+cat > /etc/systemd/system/primevpn-node-agent.service <<EOF
+[Unit]
+Description=PRIMEVPN Node Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/primevpn-node-agent
+EnvironmentFile=/etc/primevpn/agent.env
+ExecStart=/opt/primevpn-node-agent/venv/bin/uvicorn app:app --host 0.0.0.0 --port ${PORT} --ssl-keyfile /etc/primevpn/agent.key --ssl-certfile /etc/primevpn/agent.crt
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl daemon-reload
+systemctl enable --now primevpn-node-agent.service
+printf 'PORT=%s\\n' "${PORT}"
+systemctl is-active --quiet primevpn-node-agent.service
+'''
+    try:
+        async with asyncssh.connect(host,port=port,username=username,password=password,known_hosts=None,login_timeout=20,connect_timeout=20) as conn:
+            who=await conn.run("id -u",check=True)
+            uid=who.stdout.strip()
+            cmd="bash -s" if uid=="0" else "sudo -S -p '' bash -s"
+            stdin=script if uid=="0" else password+"\n"+script
+            result=await conn.run(cmd,input=stdin,check=False,timeout=600)
+            if result.exit_status!=0:
+                raise SSHProvisionError((result.stderr or result.stdout or "SSH installation failed")[-4000:])
+            port_line=next((x for x in result.stdout.splitlines() if x.startswith("PORT=")),None)
+            agent_port=int(port_line.split("=",1)[1]) if port_line else 443
+            async with conn.start_sftp_client() as sftp:
+                cert_data=await sftp.read("/etc/primevpn/agent.crt")
+            cert_pem=cert_data.decode() if isinstance(cert_data,bytes) else cert_data
+            return {"agent_port":agent_port,"certificate":cert_pem}
+    except asyncssh.Error as e:
+        raise SSHProvisionError(f"SSH connection failed: {e}") from e
+
+async def verify_agent(url:str,token:str)->dict:
+    async with httpx.AsyncClient(verify=False,timeout=20) as client:
+        r=await client.get(url.rstrip("/")+"/health",headers={"X-Agent-Token":token})
+        if r.status_code>=400:
+            raise SSHProvisionError(f"Node Agent health failed: HTTP {r.status_code} {r.text[:500]}")
+        return r.json()
