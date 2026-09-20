@@ -10,7 +10,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 import jwt
-from fastapi import APIRouter, Depends, HTTPException, Security
+from fastapi import APIRouter, Depends, HTTPException, Request, Security
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -114,7 +114,34 @@ async def login(data: LoginRequest, db: AsyncSession = Depends(get_db)):
     token = jwt.encode({'sub': admin.id, 'username': admin.username, 'role': admin.role, 'iat': now, 'exp': now + TOKEN_EXPIRE}, SECRET_KEY, algorithm=ALGORITHM)
     return {'token': token, 'username': admin.username, 'role': admin.role}
 
-async def require_auth(creds: Annotated[HTTPAuthorizationCredentials, Security(_bearer)], db: AsyncSession = Depends(get_db)) -> dict:
+def required_permission_for_request(path: str, method: str) -> str | None:
+    if path.startswith('/api/admins'):
+        return None  # admins router has its own granular guards
+    if path.startswith('/api/nodes'):
+        return {'GET':'nodes.view','POST':'nodes.create','PATCH':'nodes.edit','DELETE':'nodes.delete'}.get(method)
+    if path.startswith('/api/users'):
+        if method == 'POST' and path == '/api/users':
+            return 'users.create'
+        if method == 'DELETE':
+            return 'users.delete'
+        if any(x in path for x in ('/block','/unblock')):
+            return 'users.disable'
+        if any(x in path for x in ('/lifecycle','/device-limit')):
+            return 'users.edit'
+        if '/configs' in path or '/qr' in path:
+            return 'configs.download' if method == 'GET' else 'configs.view'
+        return 'users.view'
+    if path.startswith('/api/openvpn'):
+        if path.endswith('/config') and method == 'GET':
+            return 'configs.download'
+        if method == 'GET':
+            return 'configs.view'
+        return 'openvpn.manage'
+    if path.startswith('/api/inbounds'):
+        return 'nodes.view' if method == 'GET' else None
+    return None
+
+async def require_auth(creds: Annotated[HTTPAuthorizationCredentials, Security(_bearer)], request: Request, db: AsyncSession = Depends(get_db)) -> dict:
     try:
         payload = jwt.decode(creds.credentials, SECRET_KEY, algorithms=[ALGORITHM])
     except jwt.InvalidTokenError as exc:
@@ -123,6 +150,9 @@ async def require_auth(creds: Annotated[HTTPAuthorizationCredentials, Security(_
     admin = await db.get(Admin, admin_id)
     if not admin or not admin.is_active:
         raise HTTPException(status_code=401, detail='Account is inactive or no longer exists')
+    required = required_permission_for_request(request.url.path, request.method)
+    if required and not has_permission(admin, required):
+        raise HTTPException(status_code=403, detail='Permission denied')
     _CURRENT_ADMIN.set(admin)
     payload['_admin'] = admin
     return payload
