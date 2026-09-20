@@ -27,8 +27,12 @@ def render_openvpn(server_network:str,port:int,transport:str="udp",tls_min:str="
  lines=[f"port {port}",f"proto {transport}",f"server {net.network_address} {net.netmask}","topology subnet",f"ca {ca_path}",f"cert {cert_path}",f"key {key_path}",f"tls-version-min {tls_min}",f"tls-crypt {tls_crypt_path}","data-ciphers AES-256-GCM:AES-128-GCM","keepalive 10 60","persist-key","persist-tun","status /run/primevpn/openvpn.status 10","status-version 3"]
  if crl_path:lines.append(f"crl-verify {crl_path}")
  lines.append("verb 3");return "\n".join(lines)+"\n"
-
-def render_amneziawg_options(junk,init,response,cookie):
- values={"Jc":init,"Jmin":junk,"Jmax":response,"S1":cookie,"S2":cookie,"H1":0,"H2":0,"H3":0,"H4":0}
- if any(v is None or int(v)<0 for v in values.values()):raise ValueError("invalid AmneziaWG parameters")
- return "\n".join(f"{k} = {int(v)}" for k,v in values.items())+"\n"
+def render_amneziawg_options(params:dict)->str:
+ required=["Jc","Jmin","Jmax","S1","S2","S3","S4","H1","H2","H3","H4"]
+ if any(k not in params for k in required):raise ValueError("all AmneziaWG parameters are required")
+ if not 0<=int(params["Jc"])<=100 or not 0<=int(params["Jmin"])<=65535 or not 0<=int(params["Jmax"])<=65535 or int(params["Jmin"])>int(params["Jmax"]):raise ValueError("invalid AmneziaWG junk parameters")
+ for k in ["S1","S2","S3","S4"]:
+  if not 0<=int(params[k])<=65535:raise ValueError("invalid AmneziaWG padding")
+ for k in ["H1","H2","H3","H4"]:
+  if not 0<=int(params[k])<=4294967295:raise ValueError("invalid AmneziaWG header")
+ return "\n".join(f"{k} = {params[k]}" for k in required)+"\n"
