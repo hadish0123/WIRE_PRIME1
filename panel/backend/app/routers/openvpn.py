@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models import Node, OpenVPNClient, User
 from app.routers.auth import has_permission, require_auth
-from app.routers.api_parts.common import get_scoped_node, get_scoped_user, owner_filter, tenant_owner_for_create
+from app.routers.api_parts.common import get_scoped_node, get_scoped_user, owner_filter, tenant_owner_for_create, guard_tenant_owner
 
 router = APIRouter(prefix='/api/openvpn', dependencies=[Depends(require_auth)])
 NAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.-]{0,31}$')
@@ -113,7 +113,7 @@ async def list_clients(auth: dict = Depends(require_auth), db: AsyncSession = De
 async def download_client(client_id: str, auth: dict = Depends(require_auth), db: AsyncSession = Depends(get_db)):
     _guard(auth, 'configs.download')
     client = await db.get(OpenVPNClient, client_id)
-    if not client or client.status != 'active' or (not __import__('app.routers.auth', fromlist=['is_super_admin']).is_super_admin(__import__('app.routers.auth', fromlist=['current_admin']).current_admin()) and client.owner_admin_id != __import__('app.routers.auth', fromlist=['tenant_root']).tenant_root(__import__('app.routers.auth', fromlist=['current_admin']).current_admin())):
+    if not client or client.status != 'active' or guard_tenant_owner(client.owner_admin_id):
         raise HTTPException(status_code=404, detail='OpenVPN client not found')
     node = await db.get(Node, client.node_id)
     if not node:
