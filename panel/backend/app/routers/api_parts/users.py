@@ -326,6 +326,14 @@ async def api_update_local_lifecycle(user_id: str, data: LocalUserLifecycleUpdat
         raise HTTPException(status_code=404, detail='User not found')
     await guard_not_remnawave_managed(user)
 
+    root_id = user.owner_admin_id
+    actor = __import__('app.routers.auth', fromlist=['current_admin']).current_admin()
+    if actor and actor.role != 'super_admin' and root_id:
+        root = await db.get(Admin, root_id)
+        if root and root.traffic_quota_bytes > 0:
+            used = await db.scalar(select(func.coalesce(func.sum(User.traffic_limit_bytes), 0)).where(User.owner_admin_id == root_id, User.id != user.id))
+            if int(used or 0) + data.traffic_limit_bytes > root.traffic_quota_bytes:
+                raise HTTPException(status_code=403, detail='Your traffic quota has been reached')
     user.expire_at = data.expire_at
     user.traffic_limit_bytes = data.traffic_limit_bytes
     user.traffic_reset_policy = data.traffic_reset_policy
