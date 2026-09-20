@@ -697,7 +697,11 @@ async def _agent_lifespan(_app: FastAPI) -> AsyncIterator[None]:
     yield
 
 
-app = FastAPI(title='AmneziaWG Node Agent', lifespan=_agent_lifespan)
+app = FastAPI(title='PRIMEVPN Node Agent', version='100.0.0', lifespan=_agent_lifespan)
+
+@app.get('/version')
+def version():
+    return {'version': '100.0.0', 'product': 'PRIMEVPN Node Agent'}
 
 _bearer = HTTPBearer()
 
