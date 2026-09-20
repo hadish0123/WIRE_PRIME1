@@ -49,3 +49,5 @@ export const admins={
  disable:(id:string)=>api<any>("/admins/"+id,{method:"DELETE"}),
  remove:(id:string)=>api<any>("/admins/"+id+"/permanent",{method:"DELETE"})
 };
+
+export const settings={get:()=>api<any>("/settings"),update:(body:unknown)=>api<any>("/settings",{method:"PATCH",body:JSON.stringify(body)})};
