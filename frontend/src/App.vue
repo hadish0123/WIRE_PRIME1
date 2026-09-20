@@ -56,7 +56,7 @@ onMounted(load);
 <div class="dashboard-grid">
 <div class="panel traffic-card"><div class="panel-head"><div><h2>{{t("مصرف ترافیک","Traffic Usage")}}</h2><small>{{t("بر اساس داده‌های ثبت‌شده","Based on recorded usage")}}</small></div><span class="live-badge"><i></i>{{t("زنده","Live")}}</span></div>
 <div class="traffic-total">{{formatBytes(trafficTotal)}</div>
-<div class="traffic-bars"><div class="traffic-row"><span>IN</span><div class="traffic-track"><b :style="{width:trafficInPct+'%'}"></b></div><strong>{{formatBytes(trafficIn)}}</strong></div><div class="traffic-row"><span>OUT</span><div class="traffic-track out"><b :style="{width:trafficOutPct+'%'}"></b></div><strong>{{formatBytes(trafficOut)}}</strong></div></div>
+<div class="traffic-bars"><div class="traffic-row"><span>IN</span><div class="traffic-track"><b :style="{ width: trafficInPct + '%' }"></b></div><strong>{{trafficInLabel}}</strong></div><div class="traffic-row"><span>OUT</span><div class="traffic-track out"><b  :style="{ width: trafficOutPct + '%' }"></b></div><strong>{{trafficOutLabel}}</strong></div></div>
 <div class="traffic-foot"><span>{{t("دریافت","Download")}} {{trafficInPct}}%</span><span>{{t("ارسال","Upload")}} {{trafficOutPct}}%</span></div></div>
 <div class="panel health-card"><div class="panel-head"><div><h2>{{t("سلامت زیرساخت","Infrastructure Health")}}</h2><small>Nodes · Inbounds · Clients</small></div></div>
 <div class="health-row"><span class="health-icon nodes">▤</span><div><b>{{t("نودها","Nodes")}}</b><small>{{nodeOnline}} {{t("آنلاین","online")}} · {{nodeOffline}} {{t("خارج از دسترس","offline")}}</small></div><strong :class="nodeOffline ? 'bad' : ''">{{nodeOffline ? t("نیازمند بررسی","Attention") : t("سالم","Healthy")}}</strong></div>
