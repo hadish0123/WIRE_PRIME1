@@ -7,6 +7,7 @@ from ..schemas import InboundIn,InboundOut
 from ..services.audit import record
 from ..services.credentials import wg_keypair,openvpn_ca,openvpn_server,openvpn_tls_crypt_key
 from ..security import encrypt_secret
+from ..services.openvpn_revoke import create_empty_crl
 router=APIRouter()
 
 @router.get("",response_model=list[InboundOut])
@@ -23,7 +24,7 @@ def create_inbound(data:InboundIn,request:Request,admin:Admin=Depends(require_te
   db.add(InboundWireGuard(inbound_id=item.id,server_public_key=public,server_private_key_encrypted=encrypt_secret(private),amnezia_junk=7 if data.protocol==Protocol.amneziawg else None,amnezia_init=8 if data.protocol==Protocol.amneziawg else None,amnezia_response=80 if data.protocol==Protocol.amneziawg else None,amnezia_cookie=0 if data.protocol==Protocol.amneziawg else None))
  else:
   ca,ca_key=openvpn_ca();server_cert,server_key=openvpn_server(ca,ca_key,"PRIMEVPN Server")
-  db.add(InboundOpenVPN(inbound_id=item.id,transport="udp",server_network=data.network,tls_min="1.2",tls_crypt=True,cipher_policy="AES-256-GCM:AES-128-GCM:CHACHA20-POLY1305",ca_pem=ca,server_cert_pem=server_cert,server_key_encrypted=encrypt_secret(server_key),ca_key_encrypted=encrypt_secret(ca_key),tls_crypt_key_encrypted=encrypt_secret(openvpn_tls_crypt_key())))
+  db.add(InboundOpenVPN(inbound_id=item.id,transport="udp",server_network=data.network,tls_min="1.2",tls_crypt=True,cipher_policy="AES-256-GCM:AES-128-GCM:CHACHA20-POLY1305",ca_pem=ca,server_cert_pem=server_cert,server_key_encrypted=encrypt_secret(server_key),ca_key_encrypted=encrypt_secret(ca_key),tls_crypt_key_encrypted=encrypt_secret(openvpn_tls_crypt_key()),crl_pem=create_empty_crl(ca,ca_key)))
  record(db,admin,request,"inbound.create","inbound",item.id);db.commit();db.refresh(item);return item
 
 @router.patch("/{inbound_id}",response_model=InboundOut)
