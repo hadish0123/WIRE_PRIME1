@@ -15,17 +15,18 @@
     "menu": "主导航"
   },
   "login": {
-    "kicker": "访问管理",
+    "kicker": "PRIMEVPN",
     "title": "VPN 管理面板",
-    "description": "从单一面板管理服务器、用户、配置和 Remnawave 同步。",
-    "signalsNodes": "服务器",
+    "description": "用于多节点 WireGuard 和 OpenVPN 的安全控制面板。",
+    "signalsNodes": "多节点",
     "signalsUsers": "用户",
     "signalsConfigs": "配置",
     "brand": "AmneziaWG",
-    "subtitle": "管理员登录",
+    "subtitle": "控制台",
     "password": "密码",
     "submit": "登录",
-    "error": "登录失败"
+    "error": "登录失败",
+    "username": "用户名"
   },
   "users": {
     "kicker": "访问管理",
