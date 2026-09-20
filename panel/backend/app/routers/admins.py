@@ -10,8 +10,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models import Admin
-from app.routers.auth import has_permission, hash_password, require_auth
+from app.models import Admin, Node
+from app.routers.auth import has_permission, hash_password, require_auth, is_super_admin, tenant_root
 
 router = APIRouter(prefix='/api/admins', dependencies=[Depends(require_auth)])
 
@@ -57,20 +57,33 @@ def _guard(auth: dict, permission: str) -> Admin:
 @router.get('', response_model=list[AdminOut])
 async def list_admins(auth: dict = Depends(require_auth), db: AsyncSession = Depends(get_db)):
     _guard(auth, 'admins.view')
-    rows = (await db.execute(select(Admin).order_by(Admin.username))).scalars().all()
+    actor = auth['_admin']
+    stmt = select(Admin).order_by(Admin.username)
+    if not is_super_admin(actor):
+        stmt = stmt.where(Admin.tenant_owner_id == tenant_root(actor))
+    rows = (await db.execute(stmt)).scalars().all()
     return [_out(a) for a in rows]
 
 @router.post('', response_model=AdminOut, status_code=201)
 async def create_admin(data: AdminIn, auth: dict = Depends(require_auth), db: AsyncSession = Depends(get_db)):
     _guard(auth, 'admins.create')
-    if data.role == 'super_admin' and auth['_admin'].role != 'super_admin':
+    actor = auth['_admin']
+    if data.role == 'super_admin' and not is_super_admin(actor):
         raise HTTPException(status_code=403, detail='Only super admin can create a super admin')
+    if data.role == 'super_admin':
+        tenant_id = actor.id
+    else:
+        tenant_id = tenant_root(actor)
+    if data.node_ids:
+        owned = set((await db.execute(select(Node.id).where(Node.id.in_(data.node_ids), Node.owner_admin_id == tenant_id))).scalars())
+        if set(data.node_ids) - owned:
+            raise HTTPException(status_code=403, detail='One or more selected nodes are outside your tenant')
     if await db.scalar(select(Admin).where(Admin.username == data.username)):
         raise HTTPException(status_code=409, detail='Username already exists')
     admin = Admin(
         id=str(uuid.uuid4()), username=data.username, password_hash=hash_password(data.password),
         role=data.role, permissions_json=json.dumps(sorted(set(data.permissions))),
-        node_ids_json=json.dumps(sorted(set(data.node_ids))), is_active=data.is_active,
+        node_ids_json=json.dumps(sorted(set(data.node_ids))), is_active=data.is_active, tenant_owner_id=tenant_id,
         created_at=datetime.now(UTC),
     )
     db.add(admin)
@@ -82,9 +95,9 @@ async def create_admin(data: AdminIn, auth: dict = Depends(require_auth), db: As
 async def update_admin(admin_id: str, data: AdminUpdate, auth: dict = Depends(require_auth), db: AsyncSession = Depends(get_db)):
     actor = _guard(auth, 'admins.edit')
     admin = await db.get(Admin, admin_id)
-    if not admin:
+    if not admin or (not is_super_admin(actor) and admin.tenant_owner_id != tenant_root(actor)):
         raise HTTPException(status_code=404, detail='Admin not found')
-    if admin.role == 'super_admin' and actor.role != 'super_admin':
+    if admin.role == 'super_admin' and not is_super_admin(actor):
         raise HTTPException(status_code=403, detail='Only super admin can edit a super admin')
     for field, value in data.model_dump(exclude_unset=True).items():
         if field == 'password' and value:
@@ -107,7 +120,7 @@ async def delete_admin(admin_id: str, auth: dict = Depends(require_auth), db: As
     if admin_id == actor.id:
         raise HTTPException(status_code=400, detail='You cannot delete your own account')
     admin = await db.get(Admin, admin_id)
-    if not admin:
+    if not admin or (not is_super_admin(actor) and admin.tenant_owner_id != tenant_root(actor)):
         raise HTTPException(status_code=404, detail='Admin not found')
     if admin.role == 'super_admin' and actor.role != 'super_admin':
         raise HTTPException(status_code=403, detail='Only super admin can delete a super admin')
