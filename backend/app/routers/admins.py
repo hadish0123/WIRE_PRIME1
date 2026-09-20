@@ -90,7 +90,7 @@ def create_admin(body:dict,request:Request,admin:Admin=Depends(require_permissio
 
 
 @router.delete("/{admin_id}/permanent")
-def delete_admin_permanently(admin_id:str,request:Request,admin:Admin=Depends(require_permission("admins:write")),db:Session=Depends(get_db)):
+def delete_admin_permanently(admin_id:str,request:Request,admin:Admin=Depends(require_permission("admins:manage")),db:Session=Depends(get_db)):
  target=db.query(Admin).filter(Admin.id==admin_id).first()
  if not target or target.role in {RoleName.platform_owner,RoleName.tenant_manager}: raise HTTPException(404,"Admin not found")
  if target.id==admin.id: raise HTTPException(400,"Cannot delete yourself")
