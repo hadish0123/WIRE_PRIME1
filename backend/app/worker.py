@@ -106,9 +106,12 @@ def enforce_quotas(db):
             q.state="WARNING"
         else:
             q.state="NORMAL"
+        elif q.state in {"NORMAL","WARNING"} and c.status==ResourceState.suspended:
+            c.status=ResourceState.active
         if limited:
-            try: revoke_client(db,c)
-            except Exception as exc: log.error("quota revoke failed client=%s: %s",c.id,exc)
+            # Do not permanently revoke credentials for quota limits. Reconciliation removes
+            # suspended peers and restores them automatically when a daily/monthly window resets.
+            pass
     db.commit()
 
 def run_job(db,j):
