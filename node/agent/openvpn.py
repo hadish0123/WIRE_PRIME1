@@ -2,6 +2,10 @@ import ipaddress
 import os
 import re
 import subprocess
+import json
+import threading
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated
 
@@ -38,6 +42,8 @@ class ServerConfig(BaseModel):
 
 class ClientRequest(BaseModel):
     name: str = Field(min_length=1, max_length=32)
+    traffic_bytes: int = Field(default=0, ge=0)
+    expire_at: str | None = None
 
 
 def _run(args: list[str], *, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
@@ -49,6 +55,75 @@ def _validate_name(name: str) -> str:
         raise HTTPException(status_code=400, detail='Invalid client name')
     return name
 
+
+
+def _limits_path(name: str) -> Path:
+    return CLIENTS_DIR / name / 'limits.json'
+
+def _save_limits(name: str, traffic_bytes: int, expire_at: str | None) -> None:
+    path = _limits_path(name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({'traffic_bytes': traffic_bytes, 'expire_at': expire_at}, separators=(',', ':')))
+
+def _parse_status_usage() -> dict[str, int]:
+    path = BASE_DIR / 'status.log'
+    if not path.is_file():
+        return {}
+    usage: dict[str, int] = {}
+    try:
+        for line in path.read_text(errors='ignore').splitlines():
+            if not line.startswith('CLIENT_LIST,'):
+                continue
+            parts = line.split(',')
+            if len(parts) >= 6:
+                try:
+                    usage[parts[1]] = int(parts[4]) + int(parts[5])
+                except ValueError:
+                    pass
+    except OSError:
+        pass
+    return usage
+
+def _enforce_limits_once() -> None:
+    now = datetime.now(timezone.utc)
+    for client_dir in CLIENTS_DIR.iterdir() if CLIENTS_DIR.exists() else []:
+        if not client_dir.is_dir():
+            continue
+        limits = _limits_path(client_dir.name)
+        if not limits.is_file():
+            continue
+        try:
+            data = json.loads(limits.read_text())
+        except (OSError, ValueError):
+            continue
+        expired = False
+        if data.get('expire_at'):
+            try:
+                expired = datetime.fromisoformat(data['expire_at'].replace('Z', '+00:00')) <= now
+            except ValueError:
+                pass
+        limit = int(data.get('traffic_bytes') or 0)
+        used = _parse_status_usage().get(client_dir.name, 0)
+        if expired or (limit > 0 and used >= limit):
+            env = {**os.environ, 'EASYRSA_PKI': str(PKI_DIR)}
+            result = subprocess.run([EASYRSA, '--batch', 'revoke', client_dir.name], cwd=PKI_DIR.parent, env=env, capture_output=True, text=True, check=False)
+            if result.returncode == 0:
+                subprocess.run([EASYRSA, 'gen-crl'], cwd=PKI_DIR.parent, env=env, capture_output=True, text=True, check=False)
+                subprocess.run(['supervisorctl', 'restart', 'openvpn'], capture_output=True, text=True, check=False)
+                try:
+                    limits.unlink()
+                except OSError:
+                    pass
+
+def _limit_monitor() -> None:
+    while True:
+        try:
+            _enforce_limits_once()
+        except Exception:
+            pass
+        time.sleep(30)
+
+threading.Thread(target=_limit_monitor, name='primevpn-openvpn-limits', daemon=True).start()
 
 def _ensure_pki() -> None:
     BASE_DIR.mkdir(parents=True, exist_ok=True)
@@ -148,7 +223,8 @@ def create_client(req: ClientRequest, _: Auth):
         '<ca>\n' + ca + '</ca>\n<cert>\n' + crt + '</cert>\n<key>\n' + key + '</key>\n'
     )
     (client_dir / 'client.ovpn').write_text(config)
-    return {'name': name, 'config_path': str(client_dir / 'client.ovpn')}
+    _save_limits(name, req.traffic_bytes, req.expire_at)
+    return {'name': name, 'config_path': str(client_dir / 'client.ovpn'), 'traffic_bytes': req.traffic_bytes, 'expire_at': req.expire_at}
 
 
 @router.get('/clients')
