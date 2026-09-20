@@ -28,7 +28,7 @@ def _admin_row(db,a):
 
 @router.get("")
 def list_admins(admin:Admin=Depends(require_permission("admins:read")),db:Session=Depends(get_db)):
- q=db.query(Admin).filter(Admin.role!=RoleName.platform_owner)
+ q=db.query(Admin).filter(Admin.role.notin_([RoleName.platform_owner,RoleName.tenant_manager]))
  if admin.role!=RoleName.platform_owner:q=q.filter(Admin.tenant_id==admin.tenant_id)
  return [_admin_row(db,a) for a in q.order_by(Admin.created_at.desc()).all()]
 
@@ -92,7 +92,7 @@ def create_admin(body:dict,request:Request,admin:Admin=Depends(require_permissio
 @router.delete("/{admin_id}/permanent")
 def delete_admin_permanently(admin_id:str,request:Request,admin:Admin=Depends(require_permission("admins:write")),db:Session=Depends(get_db)):
  target=db.query(Admin).filter(Admin.id==admin_id).first()
- if not target: raise HTTPException(404,"Admin not found")
+ if not target or target.role in {RoleName.platform_owner,RoleName.tenant_manager}: raise HTTPException(404,"Admin not found")
  if target.id==admin.id: raise HTTPException(400,"Cannot delete yourself")
  if admin.role!=RoleName.platform_owner and target.tenant_id!=admin.tenant_id: raise HTTPException(404,"Admin not found")
  db.query(AdminInboundScope).filter(AdminInboundScope.admin_id==target.id).delete(synchronize_session=False)
@@ -103,7 +103,7 @@ def delete_admin_permanently(admin_id:str,request:Request,admin:Admin=Depends(re
 @router.patch("/{admin_id}")
 def update_admin(admin_id:str,body:dict,request:Request,admin:Admin=Depends(require_permission("admins:manage")),db:Session=Depends(get_db)):
  target=db.query(Admin).filter(Admin.id==admin_id).first()
- if not target or target.role==RoleName.platform_owner:raise HTTPException(404,"Admin not found")
+ if not target or target.role in {RoleName.platform_owner,RoleName.tenant_manager}:raise HTTPException(404,"Admin not found")
  if admin.role!=RoleName.platform_owner and target.tenant_id!=admin.tenant_id:raise HTTPException(404,"Admin not found")
  if target.id==admin.id and body.get("enabled") is False:raise HTTPException(422,"You cannot disable your own account")
  role=body.get("role")
