@@ -50,16 +50,16 @@
         <div class="sidebar-menu-title">MENU</div>
         <nav v-if="menuOpen" :aria-label="$t('navigation.menu')">
           <RouterLink to="/openvpn"
-            ><i class="pi pi-lock" /> {{ $t('navigation.openvpn') }}</RouterLink
+            ><i class="pi pi-lock" /> اینباندها</RouterLink
           >
           <RouterLink to="/admins"
-            ><i class="pi pi-shield" /> {{ $t('navigation.admins') }}</RouterLink
+            ><i class="pi pi-shield" /> مدیرها</RouterLink
           >
           <RouterLink to="/nodes"
             ><i class="pi pi-server" /> {{ $t('navigation.nodes') }}</RouterLink
           >
           <RouterLink to="/users"
-            ><i class="pi pi-users" /> {{ $t('navigation.users') }}</RouterLink
+            ><i class="pi pi-users" /> کلاینت‌ها</RouterLink
           >
           <RouterLink to="/integrations/remnawave"
             ><i class="pi pi-sync" /> {{ $t('navigation.remnawave') }}</RouterLink
