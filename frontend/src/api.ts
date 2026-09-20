@@ -46,5 +46,6 @@ export const admins={
  inbounds:()=>api<any[]>("/admins/inbounds"),myInbounds:()=>api<any[]>("/admins/my-inbounds"),
  create:(body:unknown)=>api<any>("/admins",{method:"POST",body:JSON.stringify(body)}),
  update:(id:string,body:unknown)=>api<any>("/admins/"+id,{method:"PATCH",body:JSON.stringify(body)}),
- disable:(id:string)=>api<any>("/admins/"+id,{method:"DELETE"})
+ disable:(id:string)=>api<any>("/admins/"+id,{method:"DELETE"}),
+ remove:(id:string)=>api<any>("/admins/"+id+"/permanent",{method:"DELETE"})
 };
