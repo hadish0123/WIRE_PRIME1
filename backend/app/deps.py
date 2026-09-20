@@ -16,6 +16,9 @@ def current_admin(request:Request,creds:HTTPAuthorizationCredentials|None=Depend
  if a.role==RoleName.platform_owner:db.execute(text("select set_config('app.is_platform','true',true)"))
  elif a.tenant_id:db.execute(text("select set_config('app.tenant_id',:tenant,true)"),{"tenant":a.tenant_id})
  return a
+def require_tenant_manager(admin:Admin=Depends(current_admin)):
+ if admin.role not in {RoleName.platform_owner,RoleName.tenant_manager}:raise HTTPException(403,"Tenant manager permission required")
+ return admin
 def require_platform(admin:Admin=Depends(current_admin)):
  if admin.role!=RoleName.platform_owner:raise HTTPException(403,"Platform permission required")
  return admin
