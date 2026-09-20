@@ -130,3 +130,25 @@ def openvpn_crl(data:OpenVPNRevoke,x_agent_token:str|None=Header(default=None)):
   try:os.unlink(tmp)
   except FileNotFoundError:pass
   raise HTTPException(502,f"CRL apply failed: {e}")
+
+class RemoveConfig(BaseModel):
+ protocol:str
+ interface:str=Field(min_length=1,max_length=80)
+
+@app.post("/remove")
+def remove(data:RemoveConfig,x_agent_token:str|None=Header(default=None)):
+ auth(x_agent_token,"write");name=safe_interface(data.interface);base="/etc/primevpn";path=f"{base}/{name}.conf"
+ try:
+  if data.protocol in {"wireguard","amneziawg"}:
+   tool="wg-quick" if data.protocol=="wireguard" else "awg-quick"
+   if shutil.which(tool): subprocess.run([tool,"down",path],capture_output=True,text=True,timeout=20)
+  elif data.protocol=="openvpn" and shutil.which("systemctl"):
+   subprocess.run(["systemctl","stop",f"openvpn-server@{name}"],capture_output=True,text=True,timeout=30)
+  for p in [path,f"{path}.bak",f"{base}/{name}.ca.pem",f"{base}/{name}.server.pem",f"{base}/{name}.server.key",f"{base}/{name}.tls.key",f"{base}/{name}.crl.pem",f"{base}/{name}.new"]:
+   try: os.unlink(p)
+   except FileNotFoundError: pass
+  try: os.unlink(f"/etc/openvpn/server/{name}.conf")
+  except FileNotFoundError: pass
+  return {"removed":True,"interface":name}
+ except Exception as e:
+  raise HTTPException(502,f"Remove failed: {e}")
