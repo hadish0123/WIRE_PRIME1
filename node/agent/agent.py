@@ -20,6 +20,8 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from openvpn import router as openvpn_router
+
 from mtproxy import (
     DEFAULT_CONFIG_PATH as DEFAULT_MTPROXY_CONFIG_PATH,
     MTProxyConfig,
@@ -69,7 +71,8 @@ async def _agent_lifespan(_app: FastAPI) -> AsyncIterator[None]:
     yield
 
 
-app = FastAPI(title='AmneziaWG Node Agent', lifespan=_agent_lifespan)
+app = FastAPI(title='PRIMEVPN Node Agent', version='1.0.0', lifespan=_agent_lifespan)
+app.include_router(openvpn_router)
 
 _bearer = HTTPBearer()
 
