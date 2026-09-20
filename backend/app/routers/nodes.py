@@ -1,4 +1,5 @@
 from fastapi import APIRouter,Depends,HTTPException,Request
+from ..services.audit import record
 from sqlalchemy.orm import Session
 from ..db import get_db
 from ..deps import current_admin
@@ -9,9 +10,9 @@ router=APIRouter()
 def list_nodes(admin:Admin=Depends(current_admin),db:Session=Depends(get_db)):
  return db.query(Node).filter(Node.tenant_id==admin.tenant_id).order_by(Node.created_at.desc()).all()
 @router.post("",response_model=NodeOut)
-def create_node(data:NodeIn,admin:Admin=Depends(current_admin),db:Session=Depends(get_db)):
+def create_node(data:NodeIn,request:Request,admin:Admin=Depends(current_admin),db:Session=Depends(get_db)):
  if not admin.tenant_id:raise HTTPException(400,"Tenant required")
- n=Node(tenant_id=admin.tenant_id,name=data.name,address=data.address);db.add(n);db.commit();db.refresh(n);return n
+ n=Node(tenant_id=admin.tenant_id,name=data.name,address=data.address);db.add(n);record(db,admin,request,"node.create","node",n.id);db.commit();db.refresh(n);return n
 @router.post("/{node_id}/provision")
 def provision(node_id:str,request:Request,admin:Admin=Depends(current_admin),db:Session=Depends(get_db)):
  n=db.query(Node).filter(Node.id==node_id,Node.tenant_id==admin.tenant_id).first()
@@ -20,7 +21,7 @@ def provision(node_id:str,request:Request,admin:Admin=Depends(current_admin),db:
  if not key:raise HTTPException(400,"Idempotency-Key required")
  old=db.query(ProvisioningTask).filter(ProvisioningTask.idempotency_key==key).first()
  if old:return {"task_id":old.id,"state":old.state}
- t=ProvisioningTask(tenant_id=admin.tenant_id,node_id=n.id,idempotency_key=key,state=NodeState.authenticating.value);n.state=NodeState.authenticating;db.add(t);db.commit()
+ t=ProvisioningTask(tenant_id=admin.tenant_id,node_id=n.id,idempotency_key=key,state=NodeState.authenticating.value);n.state=NodeState.authenticating;db.add(t);record(db,admin,request,"node.provision","node",n.id,details={"task_id":t.id});db.commit()
  return {"task_id":t.id,"state":t.state}
 @router.get("/{node_id}/health")
 def health(node_id:str,admin:Admin=Depends(current_admin),db:Session=Depends(get_db)):
