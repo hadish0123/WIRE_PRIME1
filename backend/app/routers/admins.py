@@ -1,7 +1,7 @@
 from fastapi import APIRouter,Depends,HTTPException
 from sqlalchemy.orm import Session
 from ..db import get_db
-from ..deps import current_admin
+from ..deps import current_admin,require_tenant_manager
 from ..models import Admin,RoleName
 from ..security import hash_password
 router=APIRouter()
