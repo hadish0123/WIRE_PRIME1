@@ -7,6 +7,7 @@ from ..models import Admin,Client,Inbound,InboundOpenVPN,InboundWireGuard,Client
 from ..security import encrypt_secret,decrypt_secret
 from ..services.credentials import wg_keypair,openvpn_ca,openvpn_server,openvpn_client,openvpn_tls_crypt_key,fingerprint
 from ..services.config_artifacts import create_artifact
+from ..services.openvpn_revoke import create_empty_crl
 router=APIRouter()
 @router.post("/{client_id}/credentials")
 def issue(client_id:str,admin:Admin=Depends(current_admin),db:Session=Depends(get_db)):
@@ -27,7 +28,7 @@ def issue(client_id:str,admin:Admin=Depends(current_admin),db:Session=Depends(ge
   if not ov:raise HTTPException(409,"OpenVPN inbound is not initialized")
   if not ov.ca_pem or not ov.ca_key_encrypted or not ov.tls_crypt_key_encrypted:
    ca,ca_key=openvpn_ca();server_cert,server_key=openvpn_server(ca,ca_key,"PRIMEVPN Server")
-   ov.ca_pem=ca;ov.ca_key_encrypted=encrypt_secret(ca_key);ov.server_cert_pem=server_cert;ov.server_key_encrypted=encrypt_secret(server_key);ov.tls_crypt_key_encrypted=encrypt_secret(openvpn_tls_crypt_key());db.flush()
+   ov.ca_pem=ca;ov.ca_key_encrypted=encrypt_secret(ca_key);ov.server_cert_pem=server_cert;ov.server_key_encrypted=encrypt_secret(server_key);ov.tls_crypt_key_encrypted=encrypt_secret(openvpn_tls_crypt_key());ov.crl_pem=create_empty_crl(ca,ca_key);db.flush()
   cert,key=openvpn_client(ov.ca_pem,decrypt_secret(ov.ca_key_encrypted),c.name)
   identifier=c.name;material={"certificate":cert,"private_key":key}
   payload=f"client\ndev tun\nproto {ov.transport}\nremote {node.address} {inbound.listen_port}\nremote-cert-tls server\ntls-version-min {ov.tls_min}\ndata-ciphers {ov.cipher_policy}\n<ca>\n{ov.ca_pem}</ca>\n<cert>\n{cert}</cert>\n<key>\n{key}</key>\n<tls-crypt>\n{decrypt_secret(ov.tls_crypt_key_encrypted)}\n</tls-crypt>\n"
