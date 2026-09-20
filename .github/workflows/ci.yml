@@ -9,7 +9,7 @@ jobs:
    - uses: actions/setup-python@v5
      with: {python-version: "3.12"}
    - run: pip install -e ".[test]"
-   - run: pytest
+   - run: python -m compileall app tests\n   - run: pytest
  frontend:
   runs-on: ubuntu-latest
   defaults: {run: {working-directory: frontend}}
@@ -27,4 +27,4 @@ jobs:
    - uses: actions/setup-python@v5
      with: {python-version: "3.12"}
    - run: pip install .
-   - run: python -m py_compile app.py
+   - run: python -m py_compile app.py agent_security.py
