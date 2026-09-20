@@ -42,7 +42,8 @@ async def configure_inbound(data: InboundIn, auth: dict = Depends(require_auth),
     if not data.endpoint:
         raise HTTPException(status_code=400, detail='OpenVPN endpoint is required')
     import httpx
+    endpoint = data.endpoint if ':' in data.endpoint or data.endpoint.startswith('[') else f'{data.endpoint}:{data.port}'
     async with httpx.AsyncClient(timeout=30, headers={'Authorization': f'Bearer {node.token}'}) as client:
-        response = await client.put(node.url.rstrip('/') + '/openvpn/server', json={'endpoint': data.endpoint, 'port': data.port, 'protocol': 'udp', 'network': data.network})
+        response = await client.put(node.url.rstrip('/') + '/openvpn/server', json={'endpoint': endpoint, 'port': data.port, 'protocol': 'udp', 'network': data.network})
         response.raise_for_status()
         return {'id': f'openvpn:{node.id}', 'node_id': node.id, 'protocol': 'openvpn', 'name': data.name, **response.json()}
