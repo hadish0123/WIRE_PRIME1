@@ -21,7 +21,7 @@ async def lifespan(_app: FastAPI):
         owner = await db.scalar(select(auth.Admin).where(auth.Admin.role == 'super_admin').order_by(auth.Admin.created_at))
         if owner:
             await db.execute(text("UPDATE admins SET tenant_owner_id=:o WHERE tenant_owner_id IS NULL"), {'o': owner.id})
-            await db.execute(__import__('sqlalchemy').text("UPDATE nodes SET owner_admin_id=:o WHERE owner_admin_id IS NULL"), {'o': owner.id})
+            await db.execute(text("UPDATE nodes SET owner_admin_id=:o WHERE owner_admin_id IS NULL"), {'o': owner.id})
             await db.execute(__import__('sqlalchemy').text("UPDATE users SET owner_admin_id=:o WHERE owner_admin_id IS NULL"), {'o': owner.id})
             await db.execute(__import__('sqlalchemy').text("UPDATE openvpn_clients SET owner_admin_id=:o WHERE owner_admin_id IS NULL"), {'o': owner.id})
             await db.commit()
