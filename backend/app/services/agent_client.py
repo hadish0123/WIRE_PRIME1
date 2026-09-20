@@ -15,3 +15,6 @@ def deploy_openvpn_crl(node,instance,crl_pem):
 
 def apply_openvpn(node,instance,payload):
     return call(node,"POST","apply",{"protocol":"openvpn","interface":instance,"config":payload["config"],"files":payload["files"]})
+
+def remove(node,protocol,interface):
+    return call(node,"POST","remove",{"protocol":protocol,"interface":interface})
