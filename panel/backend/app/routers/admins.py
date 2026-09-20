@@ -105,6 +105,13 @@ async def update_admin(admin_id: str, data: AdminUpdate, auth: dict = Depends(re
         raise HTTPException(status_code=404, detail='Admin not found')
     if admin.role == 'super_admin' and not is_super_admin(actor):
         raise HTTPException(status_code=403, detail='Only super admin can edit a super admin')
+    if data.role == 'super_admin' and not is_super_admin(actor):
+        raise HTTPException(status_code=403, detail='Only super admin can assign super admin role')
+    if data.node_ids is not None and not is_super_admin(actor):
+        tenant_id = tenant_root(actor)
+        owned = set((await db.execute(select(Node.id).where(Node.id.in_(data.node_ids), Node.owner_admin_id == tenant_id))).scalars())
+        if set(data.node_ids) - owned:
+            raise HTTPException(status_code=403, detail='One or more selected nodes are outside your tenant')
     for field, value in data.model_dump(exclude_unset=True).items():
         if field == 'password' and value:
             admin.password_hash = hash_password(value)
@@ -130,7 +137,7 @@ async def delete_admin(admin_id: str, auth: dict = Depends(require_auth), db: As
     admin = await db.get(Admin, admin_id)
     if not admin or (not is_super_admin(actor) and admin.tenant_owner_id != tenant_root(actor)):
         raise HTTPException(status_code=404, detail='Admin not found')
-    if admin.role == 'super_admin' and actor.role != 'super_admin':
+    if admin.role == 'super_admin' and not is_super_admin(actor):
         raise HTTPException(status_code=403, detail='Only super admin can delete a super admin')
     await db.delete(admin)
     await db.commit()
