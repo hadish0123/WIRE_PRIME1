@@ -28,7 +28,7 @@ Self-hosted PRIMEVPN control plane for multi-node WireGuard/AmneziaWG and OpenVP
 
 | Server | What runs on it | Exposed ports |
 |---|---|---|
-| VPN node | AmneziaWG + node agent + MTProxy runtime | `51820/udp`, `8000` (restrict to panel IP), `443/tcp` or `${MTPROXY_PORT}` when Telegram proxy is enabled |
+| VPN node | AmneziaWG + node agent + MTProxy runtime | `51820/udp`, `1194/udp`, `8000` (restrict to panel IP), `443/tcp` or `${MTPROXY_PORT}` when Telegram proxy is enabled |
 | Management panel | Admin frontend + user frontend + panel backend + worker + RabbitMQ + PostgreSQL | `80` |
 
 The node agent (`8000`) must **not** be exposed to the public internet — restrict it to the management server IP via firewall.
@@ -253,7 +253,9 @@ EOF
 ```bash
 cat > .env << EOF
 DB_PASSWORD=$(openssl rand -hex 32)
+ADMIN_USERNAME=admin
 ADMIN_PASSWORD=$(openssl rand -hex 16)
+TOKEN_EXPIRE_HOURS=12
 SECRET_KEY=$(openssl rand -hex 32)
 WORKER_TOKEN=$(openssl rand -hex 32)
 REMNAWAVE_SECRET_KEY=$(openssl rand -hex 32)
@@ -274,7 +276,7 @@ The panel is now accessible at `http://<panel-server-ip>`.
 cat /opt/primevpn-panel/.env
 ```
 
-Login: `admin` / value of `ADMIN_PASSWORD`.
+Login: value of `ADMIN_USERNAME` / value of `ADMIN_PASSWORD`.
 
 ---
 
