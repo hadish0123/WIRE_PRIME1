@@ -12,6 +12,21 @@ class ResourceState(str,enum.Enum): active="ACTIVE";suspended="SUSPENDED";expire
 class Tenant(Base):
  __tablename__="tenants"
  id:Mapped[str]=mapped_column(String(36),primary_key=True,default=uid);name:Mapped[str]=mapped_column(String(160));slug:Mapped[str]=mapped_column(String(100),unique=True);enabled:Mapped[bool]=mapped_column(Boolean,default=True);created_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=now)
+class TenantSettings(Base):
+ __tablename__="tenant_settings"
+ tenant_id:Mapped[str]=mapped_column(ForeignKey("tenants.id",ondelete="CASCADE"),primary_key=True)
+ panel_name:Mapped[str]=mapped_column(String(160),default="PRIMEVPN")
+ timezone:Mapped[str]=mapped_column(String(80),default="UTC")
+ language:Mapped[str]=mapped_column(String(10),default="fa")
+ default_protocol:Mapped[str]=mapped_column(String(40),default="wireguard")
+ default_dns:Mapped[str]=mapped_column(String(160),default="1.1.1.1")
+ default_client_quota_gb:Mapped[int]=mapped_column(BigInteger,default=0)
+ default_client_duration_days:Mapped[int]=mapped_column(Integer,default=0)
+ session_timeout_minutes:Mapped[int]=mapped_column(Integer,default=120)
+ audit_retention_days:Mapped[int]=mapped_column(Integer,default=365)
+ require_mfa:Mapped[bool]=mapped_column(Boolean,default=False)
+ updated_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=now,onupdate=now)
+
 class Admin(Base):
  __tablename__="admins"
  id:Mapped[str]=mapped_column(String(36),primary_key=True,default=uid);tenant_id:Mapped[str|None]=mapped_column(ForeignKey("tenants.id",ondelete="CASCADE"),index=True);email:Mapped[str]=mapped_column(String(320),unique=True);password_hash:Mapped[str]=mapped_column(String(512));role:Mapped[RoleName]=mapped_column(Enum(RoleName),default=RoleName.tenant_operator);enabled:Mapped[bool]=mapped_column(Boolean,default=True);mfa_secret_encrypted:Mapped[str|None]=mapped_column(Text);traffic_limit_bytes:Mapped[int]=mapped_column(BigInteger,default=0);quota_duration_days:Mapped[int]=mapped_column(Integer,default=0);quota_started_at:Mapped[datetime|None]=mapped_column(DateTime(timezone=True));created_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=now)
