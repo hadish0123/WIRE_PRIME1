@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models import Node, OpenVPNClient, User
+from app.models import Admin, Node, OpenVPNClient, User
 from app.routers.auth import has_permission, require_auth
 from app.routers.api_parts.common import get_scoped_node, get_scoped_user, owner_filter, tenant_owner_for_create, guard_tenant_owner
 
@@ -90,7 +90,14 @@ async def create_client(data: ClientIn, auth: dict = Depends(require_auth), db: 
             user = User(name=data.name, owner_admin_id=tenant_owner_for_create())
             db.add(user)
             await db.flush()
-    user.traffic_limit_bytes = int(data.traffic_gb * 1024 * 1024 * 1024) if data.traffic_gb > 0 else 0
+    requested_limit = int(data.traffic_gb * 1024 * 1024 * 1024) if data.traffic_gb > 0 else 0
+    if requested_limit and user.owner_admin_id:
+        root = await db.get(Admin, user.owner_admin_id)
+        if root and root.traffic_quota_bytes > 0:
+            used = await db.scalar(select(__import__('sqlalchemy').func.coalesce(__import__('sqlalchemy').func.sum(User.traffic_limit_bytes), 0)).where(User.owner_admin_id == root.id, User.id != user.id))
+            if int(used or 0) + requested_limit > root.traffic_quota_bytes:
+                raise HTTPException(status_code=403, detail='Your traffic quota has been reached')
+    user.traffic_limit_bytes = requested_limit
     user.expire_at = datetime.now(UTC) + timedelta(days=data.days) if data.days > 0 else None
     user.lifecycle_status = 'active'
     existing = await db.scalar(select(OpenVPNClient).where(OpenVPNClient.node_id == node.id, OpenVPNClient.name == data.name))
