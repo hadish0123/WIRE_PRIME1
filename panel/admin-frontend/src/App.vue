@@ -6,10 +6,10 @@
     <div class="layout">
       <header class="topbar">
         <div class="brand-block">
-          <span class="brand-mark">AWG</span>
+          <span class="brand-mark">PRIME</span>
           <div>
-            <span class="brand">{{ $t('app.brand') }}</span>
-            <span class="brand-subtitle">{{ $t('app.subtitle') }}</span>
+            <span class="brand">PRIMEVPN</span>
+            <span class="brand-subtitle">VPN CONTROL PLANE</span>
           </div>
         </div>
         <div class="topbar-actions">
@@ -90,7 +90,7 @@ const langOptions = [
   { code: 'zh', name: t('common.languages.zh') },
 ]
 
-const THEME_COOKIE = 'amnezia-theme'
+const THEME_COOKIE = 'primevpn-theme'
 
 function saveThemePreference(theme: 'dark' | 'light') {
   const expires = new Date()
