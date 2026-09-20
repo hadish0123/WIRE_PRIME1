@@ -2,7 +2,7 @@ import json,time,logging
 from datetime import datetime,timezone,timedelta
 from sqlalchemy import func,text
 from .db import SessionLocal,set_platform_context
-from .models import Job,Quota,TrafficUsage,Device,Client,Inbound,ClientCredential,Protocol,Node,NodeState,InboundOpenVPN,NodePeerCounter,ResourceState
+from .models import Job,Quota,TrafficUsage,Device,Client,Inbound,ClientCredential,Protocol,Node,NodeState,InboundOpenVPN,NodePeerCounter,ResourceState,Session
 from .services import agent_client
 from .services.reconcile import sync_node
 from .services.openvpn_revoke import revoke_certificate
@@ -28,6 +28,12 @@ def collect_traffic(db):
                         previous=db.query(NodePeerCounter).filter_by(node_id=node.id,inbound_id=inbound.id,public_identifier=identifier).first()
                         old_in=previous.bytes_in if previous else 0;old_out=previous.bytes_out if previous else 0
                         di=max(0,cur_in-old_in);do=max(0,cur_out-old_out)
+                        handshake=int(peer.get("last_handshake") or 0)
+                        active=handshake>0 and int(time.time())-handshake<180
+                        sess=db.query(Session).filter(Session.client_id==client.id,Session.node_id==node.id,Session.inbound_id==inbound.id,Session.ended_at.is_(None)).order_by(Session.started_at.desc()).first()
+                        if active and not sess:sess=Session(tenant_id=client.tenant_id,client_id=client.id,node_id=node.id,inbound_id=inbound.id,endpoint=peer.get("endpoint"),bytes_in=cur_in,bytes_out=cur_out);db.add(sess)
+                        elif active and sess:sess.endpoint=peer.get("endpoint");sess.bytes_in=cur_in;sess.bytes_out=cur_out;sess.last_seen_at=datetime.now(timezone.utc)
+                        elif sess:sess.ended_at=datetime.now(timezone.utc)
                         if di or do: db.add(TrafficUsage(tenant_id=client.tenant_id,client_id=client.id,node_id=node.id,inbound_id=inbound.id,bytes_in=di,bytes_out=do))
                         if not previous: previous=NodePeerCounter(tenant_id=client.tenant_id,node_id=node.id,inbound_id=inbound.id,client_id=client.id,public_identifier=identifier)
                         previous.bytes_in=cur_in;previous.bytes_out=cur_out;db.add(previous)
@@ -39,6 +45,9 @@ def collect_traffic(db):
                         previous=db.query(NodePeerCounter).filter_by(node_id=node.id,inbound_id=inbound.id,public_identifier=identifier).first()
                         old_in=previous.bytes_in if previous else 0;old_out=previous.bytes_out if previous else 0
                         di=max(0,cur_in-old_in);do=max(0,cur_out-old_out)
+                        sess=db.query(Session).filter(Session.client_id==client.id,Session.node_id==node.id,Session.inbound_id==inbound.id,Session.ended_at.is_(None)).order_by(Session.started_at.desc()).first()
+                        if not sess:sess=Session(tenant_id=client.tenant_id,client_id=client.id,node_id=node.id,inbound_id=inbound.id,endpoint=peer.get("real_address"),bytes_in=cur_in,bytes_out=cur_out);db.add(sess)
+                        else:sess.endpoint=peer.get("real_address");sess.bytes_in=cur_in;sess.bytes_out=cur_out;sess.last_seen_at=datetime.now(timezone.utc)
                         if di or do: db.add(TrafficUsage(tenant_id=client.tenant_id,client_id=client.id,node_id=node.id,inbound_id=inbound.id,bytes_in=di,bytes_out=do))
                         if not previous: previous=NodePeerCounter(tenant_id=client.tenant_id,node_id=node.id,inbound_id=inbound.id,client_id=client.id,public_identifier=identifier)
                         previous.bytes_in=cur_in;previous.bytes_out=cur_out;db.add(previous)
