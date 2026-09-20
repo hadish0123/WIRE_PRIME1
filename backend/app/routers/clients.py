@@ -1,7 +1,7 @@
 from fastapi import APIRouter,Depends,HTTPException,Request\nfrom datetime import datetime,timezone
 from sqlalchemy.orm import Session
 from ..db import get_db
-from ..deps import current_admin
+from ..deps import current_admin,require_tenant_manager
 from ..models import Admin,Client,Inbound,InboundOpenVPN,ClientCredential,ResourceState,Protocol,Node
 from ..schemas import ClientIn,ClientOut
 from ..services.audit import record
