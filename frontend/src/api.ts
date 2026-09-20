@@ -14,7 +14,7 @@ export const auth={
 };
 export const nodes={
  list:()=>api<any[]>("/nodes"),
- create:(body:unknown)=>api<any>("/nodes",{method:"POST",body:JSON.stringify(body)}),
+ create:(body:unknown)=>api<any>("/nodes",{method:"POST",body:JSON.stringify(body)}),\n autoProvision:(body:unknown)=>api<any>("/nodes/auto-provision",{method:"POST",body:JSON.stringify(body)}),
  provision:(id:string)=>api<any>("/nodes/"+id+"/provision",{method:"POST",headers:{"Idempotency-Key":crypto.randomUUID()}}),
  health:(id:string)=>api<any>("/nodes/"+id+"/health")
 };
