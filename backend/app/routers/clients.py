@@ -29,14 +29,18 @@ def revoke(client_id:str,request:Request,admin:Admin=Depends(current_admin),db:S
  inbound=db.query(Inbound).filter(Inbound.id==c.inbound_id,Inbound.tenant_id==admin.tenant_id).first()
  node=db.query(Node).filter(Node.id==inbound.node_id,Node.tenant_id==admin.tenant_id).first() if inbound else None
  creds=db.query(ClientCredential).filter(ClientCredential.client_id==c.id,ClientCredential.revoked_at.is_(None)).order_by(ClientCredential.created_at.desc()).all()
- cred=creds[0] if creds else None
- if inbound and node and node.agent_url and cred:
+ if inbound and node and node.agent_url and creds:
   try:
-   if inbound.protocol in {Protocol.wireguard,Protocol.amneziawg}:revoke_wireguard_peer(node,inbound.interface,cred.public_identifier)
+   if inbound.protocol in {Protocol.wireguard,Protocol.amneziawg}:
+    for cred in creds: revoke_wireguard_peer(node,inbound.interface,cred.public_identifier)
    elif inbound.protocol==Protocol.openvpn:
     ov=db.query(InboundOpenVPN).filter(InboundOpenVPN.inbound_id==inbound.id).first()
-    if ov and ov.ca_key_encrypted and ov.ca_pem and cred.encrypted_private_material:
-     material=json.loads(decrypt_secret(cred.encrypted_private_material));ov.crl_pem=revoke_certificate(ov.crl_pem,material["certificate"],decrypt_secret(ov.ca_key_encrypted),ov.ca_pem);deploy_openvpn_crl(node,inbound.interface,ov.crl_pem)
+    if ov and ov.ca_key_encrypted and ov.ca_pem:
+     for cred in creds:
+      if not cred.encrypted_private_material: continue
+      material=json.loads(decrypt_secret(cred.encrypted_private_material))
+      ov.crl_pem=revoke_certificate(ov.crl_pem,material["certificate"],decrypt_secret(ov.ca_key_encrypted),ov.ca_pem)
+     deploy_openvpn_crl(node,inbound.interface,ov.crl_pem)
   except Exception as e:raise HTTPException(502,f"Node revocation failed: {e}")
  c.status=ResourceState.revoked
  for item in creds:item.revoked_at=datetime.now(timezone.utc)
