@@ -10,7 +10,9 @@ if command -v awg >/dev/null 2>&1; then echo "AmneziaWG tools detected"; else ec
 python3 -m venv /opt/primevpn-agent/.venv
 /opt/primevpn-agent/.venv/bin/pip install --upgrade pip
 /opt/primevpn-agent/.venv/bin/pip install .
-printf '%s\n' "PRIMEVPN_AGENT_VERIFY_PUBLIC_KEY=$PRIMEVPN_AGENT_VERIFY_PUBLIC_KEY" "PRIMEVPN_NODE_ID=$PRIMEVPN_NODE_ID" > /etc/primevpn/agent.env
+printf "%s\n" "$PRIMEVPN_AGENT_VERIFY_PUBLIC_KEY" > /etc/primevpn/control-agent-public.pem
+chmod 0600 /etc/primevpn/control-agent-public.pem
+printf '%s\n' "PRIMEVPN_AGENT_VERIFY_PUBLIC_KEY_FILE=/etc/primevpn/control-agent-public.pem" "PRIMEVPN_NODE_ID=$PRIMEVPN_NODE_ID" > /etc/primevpn/agent.env
 chmod 0600 /etc/primevpn/agent.env
 cp primevpn-agent.service /etc/systemd/system/primevpn-agent.service
 systemctl daemon-reload
