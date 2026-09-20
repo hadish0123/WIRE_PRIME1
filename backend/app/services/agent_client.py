@@ -12,3 +12,6 @@ def revoke_wireguard_peer(node,interface,public_key):
 
 def deploy_openvpn_crl(node,instance,crl_pem):
  return call(node,"POST","openvpn/crl",{"instance":instance,"crl_pem":crl_pem})
+
+def apply_openvpn(node,instance,payload):
+    return call(node,"POST","apply",{"protocol":"openvpn","interface":instance,"config":payload["config"],"files":payload["files"]})
