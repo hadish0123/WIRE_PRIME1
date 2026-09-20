@@ -1,5 +1,5 @@
 import json,time,logging
-from datetime import datetime,timezone
+from datetime import datetime,timezone,timedelta
 from sqlalchemy import func,text
 from .db import SessionLocal,set_platform_context
 from .models import Job,Quota,TrafficUsage,Device,Client,Inbound,ClientCredential,Protocol,Node,NodeState,InboundOpenVPN,NodePeerCounter,ResourceState
@@ -48,7 +48,7 @@ def collect_traffic(db):
         db.commit()
 
 def revoke_client(db,c):
-    inbound=db.query(Inbound).filter(Inbound.id==c.inbound_id,c.tenant_id==c.tenant_id).first()
+    inbound=db.query(Inbound).filter(Inbound.id==c.inbound_id,Inbound.tenant_id==c.tenant_id).first()
     node=db.query(Node).filter(Node.id==inbound.node_id).first() if inbound else None
     cred=db.query(ClientCredential).filter(ClientCredential.client_id==c.id,ClientCredential.revoked_at.is_(None)).order_by(ClientCredential.created_at.desc()).first()
     if not inbound or not node or not cred or not node.agent_url: return
@@ -120,8 +120,7 @@ def process_jobs(db):
         try:
             run_job(db,j);j.state="SUCCEEDED";db.commit()
         except Exception as exc:
-            db.rollback();j=db.query(Job).filter(Job.id==j.id).first();j.state="FAILED" if j.attempts>=5 else "QUEUED";j.run_after=datetime.now(timezone.utc).replace(microsecond=0)
-            if j.state=="QUEUED": j.run_after=j.run_after.replace(second=min(59,2**min(j.attempts,5)))
+            db.rollback();j=db.query(Job).filter(Job.id==j.id).first();j.state="FAILED" if j.attempts>=5 else "QUEUED";j.run_after=datetime.now(timezone.utc)+timedelta(seconds=min(300,2**min(j.attempts,8)))
             db.commit();log.error("job failed id=%s kind=%s attempt=%s: %s",j.id,j.kind,j.attempts,exc)
 
 def run_once():
