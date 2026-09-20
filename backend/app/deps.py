@@ -19,8 +19,8 @@ def current_admin(request:Request,creds:HTTPAuthorizationCredentials|None=Depend
   db.execute(text("select set_config('app.is_platform','true',false)"))
   db.execute(text("select set_config('app.tenant_id','' ,false)"))
  elif a.tenant_id:
-  db.execute(text("select set_config('app.is_platform','false',true)"))
-  db.execute(text("select set_config('app.tenant_id',:tenant,true)"),{"tenant":a.tenant_id})
+  db.execute(text("select set_config('app.is_platform','false',false)"))
+  db.execute(text("select set_config('app.tenant_id',:tenant,false)"),{"tenant":a.tenant_id})
  else:
   raise HTTPException(403,"Tenant context required")
  return a
