@@ -22,7 +22,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Device, Node, Peer, User
-from app.routers.api_parts.common import DB, guard_tenant_owner, owner_filter, node_filter
+from app.routers.api_parts.common import DB, guard_tenant_owner, owner_filter, node_filter, get_scoped_node
 from app.services.account_policy import fresh_account_status
 from app.services.devices import (
     PENDING_CONFIG_DETAIL,
@@ -101,11 +101,7 @@ async def _resolve_legacy_device(db: AsyncSession, user_id: str) -> Device:
 
 
 async def _get_node_or_404(db: AsyncSession, node_id: str) -> Node:
-    node = await db.get(Node, node_id)
-    if node is None:
-        raise HTTPException(status_code=404, detail='Node not found')
-    guard_tenant_owner(node.owner_admin_id)
-    return node
+    return await get_scoped_node(node_id, db)
 
 
 async def _config_entries(db: AsyncSession, device: Device, nodes: list[Node]) -> list[dict]:
