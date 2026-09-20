@@ -16,7 +16,7 @@ ROLE_PERMISSIONS={
   "nodes:read","nodes:create","nodes:provision","nodes:update",
   "inbounds:read","inbounds:create","inbounds:update","inbounds:delete",
   "clients:read","clients:create","clients:update","clients:revoke",
-  "traffic:read","quota:read","quota:manage","audit:read"
+  "traffic:read","quota:read","quota:manage","audit:read","settings:read","settings:write"
  },
  RoleName.tenant_operator:{
   "nodes:read","inbounds:read","clients:read","traffic:read","quota:read","audit:read"
