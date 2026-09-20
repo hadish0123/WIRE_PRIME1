@@ -15,7 +15,7 @@ from app.models import (
     Peer,
     PeerSchema,
 )
-from app.routers.api_parts.common import DB
+from app.routers.api_parts.common import DB, get_scoped_node, owner_filter, tenant_owner_for_create
 from app.services.devices import create_pending_peers_for_node, release_device_ips
 from app.services.node_sync import load_node_with_peers
 from app.services.online import is_peer_online, online_threshold_seconds
@@ -39,7 +39,7 @@ async def _enqueue_provision_operation(db: DB, node: Node) -> AsyncOperation:
 @router.get('/nodes', response_model=list[NodeWithStatus])
 async def api_list_nodes(db: DB):
     threshold_seconds = await online_threshold_seconds(db)
-    nodes = (await db.execute(select(Node).options(selectinload(Node.peers)))).scalars().all()
+    nodes = (await db.execute(select(Node).where(owner_filter(Node.owner_admin_id)).options(selectinload(Node.peers)))).scalars().all()
     return [
         NodeWithStatus(
             **NodeSchema.model_validate(node).model_dump(),
@@ -62,6 +62,7 @@ async def api_add_node(data: NodeIn, db: DB):
         private_key=priv,
         server_public_key=pub,
         provision_status='pending',
+        owner_admin_id=tenant_owner_for_create(),
     )
     db.add(node)
     await db.flush()
@@ -79,9 +80,7 @@ async def api_add_node(data: NodeIn, db: DB):
 @router.post('/nodes/{node_id}/provision', status_code=202)
 async def api_provision_node(node_id: str, db: DB):
     """Re-send interface config to the node agent (use after node restart or first boot)."""
-    node = await db.get(Node, node_id)
-    if not node:
-        raise HTTPException(status_code=404, detail='Node not found')
+    node = await get_scoped_node(node_id, db)
     if not node.private_key:
         node.private_key, node.server_public_key = generate_keypair()
     node.provision_status = 'pending'
@@ -130,6 +129,7 @@ async def api_delete_node(node_id: str, db: DB):
 
 @router.get('/nodes/{node_id}/peers', response_model=list[PeerSchema])
 async def api_node_peers(node_id: str, db: DB):
+    await get_scoped_node(node_id, db)
     threshold_seconds = await online_threshold_seconds(db)
     rows = (
         (
@@ -162,9 +162,7 @@ async def api_node_peers(node_id: str, db: DB):
 
 @router.get('/nodes/{node_id}/local-traffic', response_model=LocalAmneziawgNodeUsageTotals)
 async def api_node_local_traffic(node_id: str, db: DB):
-    node = await db.get(Node, node_id)
-    if not node:
-        raise HTTPException(status_code=404, detail='Node not found')
+    node = await get_scoped_node(node_id, db)
 
     row = (
         await db.execute(
