@@ -17,7 +17,7 @@
           <div class="admin-main">
             <div>
               <strong>{{ admin.username }}</strong>
-              <div class="muted">{{ roleLabel(admin.role) }} · {{ admin.is_active ? $t('status.active') : $t('status.disabled') }}</div>
+              <div class="muted">{{ roleLabel(admin.role) }} · {{ admin.is_active ? $t('status.active') : $t('status.disabled') }} · {{ admin.user_quota || '∞' }} کاربر · {{ admin.traffic_quota_gb || '∞' }} GB</div>
             </div>
             <Tag :value="roleLabel(admin.role)" :severity="admin.role === 'super_admin' ? 'success' : 'info'" />
           </div>
@@ -38,6 +38,12 @@
         <div class="form-grid">
           <label>{{ $t('login.username') }}<InputText v-model="form.username" autocomplete="off" required /></label>
           <label>{{ $t('login.password') }}<Password v-model="form.password" :feedback="true" toggleMask required /></label>
+          <label>سقف تعداد کلاینت
+            <InputNumber v-model="form.user_quota" :min="0" :useGrouping="false" />
+          </label>
+          <label>سقف حجم کلاینت‌ها (GB)
+            <InputNumber v-model="form.traffic_quota_gb" :min="0" :useGrouping="false" />
+          </label>
           <label>{{ $t('admins.role') }}
             <Select v-model="form.role" :options="roles" optionLabel="label" optionValue="value" />
           </label>
@@ -87,6 +93,7 @@ import InputText from 'primevue/inputtext'
 import Password from 'primevue/password'
 import Select from 'primevue/select'
 import Checkbox from 'primevue/checkbox'
+import InputNumber from 'primevue/inputnumber'
 import { useI18n } from 'vue-i18n'
 import { adminsApi, type Admin } from '../api/admins'
 import { req } from '../api/client'
@@ -102,7 +109,7 @@ const selectedPermissions = ref<string[]>([])
 const selectedNodes = ref<string[]>([])
 const allNodes = ref(true)
 
-const form = reactive({ username: '', password: '', role: 'sub_admin' as Admin['role'], is_active: true })
+const form = reactive({ username: '', password: '', role: 'sub_admin' as Admin['role'], is_active: true, user_quota: 0, traffic_quota_gb: 0 })
 const roles = [
   { value:'sub_admin', label:'مدیر محدود' },
   { value:'admin', label:'مدیر' },
@@ -131,7 +138,7 @@ async function load() {
   finally { loading.value = false }
 }
 function resetForm(){
-  form.username=''; form.password=''; form.role='sub_admin'; form.is_active=true
+  form.username=''; form.password=''; form.role='sub_admin'; form.is_active=true; form.user_quota=0; form.traffic_quota_gb=0
   selectedPermissions.value=[]; selectedNodes.value=[]; allNodes.value=true
 }
 async function create(){
