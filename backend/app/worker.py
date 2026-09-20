@@ -2,7 +2,7 @@ import json,time,logging
 from datetime import datetime,timezone,timedelta
 from sqlalchemy import func,text
 from .db import SessionLocal,set_platform_context
-from .models import Job,Quota,TrafficUsage,Device,Client,Inbound,ClientCredential,Protocol,Node,NodeState,InboundOpenVPN,NodePeerCounter,ResourceState,Session
+from .models import Job,Quota,TrafficUsage,Device,Client,Inbound,ClientCredential,Protocol,Node,NodeState,InboundOpenVPN,NodePeerCounter,ResourceState,Session,ProvisioningTask
 from .services import agent_client
 from .services.reconcile import sync_node
 from .services.openvpn_revoke import revoke_certificate
@@ -154,7 +154,7 @@ def run_once():
                 db.rollback();node=db.query(Node).filter(Node.id==node.id).first() if node else None
                 if node:
                     node.state=NodeState.degraded
-                    task=db.query(__import__("app.models",fromlist=["ProvisioningTask"]).ProvisioningTask).filter(__import__("app.models",fromlist=["ProvisioningTask"]).ProvisioningTask.node_id==node.id).order_by(__import__("app.models",fromlist=["ProvisioningTask"]).ProvisioningTask.created_at.desc()).first()
+                    task=db.query(ProvisioningTask).filter(ProvisioningTask.node_id==node.id,ProvisioningTask.tenant_id==node.tenant_id).order_by(ProvisioningTask.created_at.desc()).first()
                     if task:
                         task.state=NodeState.degraded.value
                         task.error=str(exc)[:4000]
