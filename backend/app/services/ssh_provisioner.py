@@ -67,7 +67,7 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=/opt/primevpn-node-agent
 EnvironmentFile=/etc/primevpn/agent.env
-ExecStart=/opt/primevpn-node-agent/venv/bin/uvicorn app:app --host 0.0.0.0 --port \${PORT} --ssl-keyfile /etc/primevpn/agent.key --ssl-certfile /etc/primevpn/agent.crt
+ExecStart=/opt/primevpn-node-agent/venv/bin/uvicorn app:app --host 0.0.0.0 --port ${{PORT}} --ssl-keyfile /etc/primevpn/agent.key --ssl-certfile /etc/primevpn/agent.crt
 Restart=always
 RestartSec=3
 
@@ -80,18 +80,18 @@ systemctl enable --now primevpn-node-agent.service
 
 sleep 2
 systemctl is-active --quiet primevpn-node-agent.service
-curl -kfsS --max-time 10 "https://127.0.0.1:\${PORT}/healthz" >/dev/null
+curl -kfsS --max-time 10 "https://127.0.0.1:${{PORT}}/healthz" >/dev/null
 
 # Open the selected Agent port when a host firewall is enabled.
 if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
-  ufw allow "\${PORT}/tcp" >/dev/null
+  ufw allow "${{PORT}}/tcp" >/dev/null
 fi
 if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
-  firewall-cmd --permanent --add-port="\${PORT}/tcp" >/dev/null
+  firewall-cmd --permanent --add-port="${{PORT}}/tcp" >/dev/null
   firewall-cmd --reload >/dev/null
 fi
 
-printf 'PORT=%s\\n' "\${PORT}"
+printf 'PORT=%s\\n' "${{PORT}}"
 '''
     try:
         async with asyncssh.connect(host,port=port,username=username,password=password,known_hosts=None,login_timeout=20,connect_timeout=20) as conn:
