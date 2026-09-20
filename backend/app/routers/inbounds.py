@@ -1,7 +1,7 @@
 from fastapi import APIRouter,Depends,HTTPException,Request
 from sqlalchemy.orm import Session
 from ..db import get_db
-from ..deps import current_admin,require_tenant_manager
+from ..deps import current_admin,require_tenant_manager,require_permission
 from ..models import Admin,Inbound,Node,InboundWireGuard,InboundOpenVPN,Protocol
 from ..schemas import InboundIn,InboundOut
 from ..services.audit import record
@@ -20,7 +20,7 @@ def _node(db,inbound,tenant_id):
  return node
 
 @router.get("",response_model=list[InboundOut])
-def list_inbounds(admin:Admin=Depends(current_admin),db:Session=Depends(get_db)):
+def list_inbounds(admin:Admin=Depends(require_permission("inbounds:read")),db:Session=Depends(get_db)):
  return db.query(Inbound).filter(Inbound.tenant_id==admin.tenant_id).order_by(Inbound.created_at.desc()).all()
 
 @router.post("",response_model=InboundOut)
