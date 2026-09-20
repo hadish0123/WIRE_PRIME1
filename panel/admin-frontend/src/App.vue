@@ -9,7 +9,7 @@
           <span class="brand-mark">PRIME</span>
           <div>
             <span class="brand">PRIMEVPN</span>
-            <span class="brand-subtitle">VPN CONTROL PLANE</span>
+            <span class="brand-subtitle">{{ $t('app.subtitle') }}</span>
           </div>
         </div>
         <div class="topbar-actions">
@@ -44,10 +44,10 @@
         </div>
         <nav :aria-label="$t('navigation.menu')">
           <RouterLink to="/openvpn"
-            ><i class="pi pi-lock" /> OpenVPN</RouterLink
+            ><i class="pi pi-lock" /> {{ $t('navigation.openvpn') }}</RouterLink
           >
           <RouterLink to="/admins"
-            ><i class="pi pi-shield" /> Admins</RouterLink
+            ><i class="pi pi-shield" /> {{ $t('navigation.admins') }}</RouterLink
           >
           <RouterLink to="/nodes"
             ><i class="pi pi-server" /> {{ $t('navigation.nodes') }}</RouterLink
@@ -91,6 +91,7 @@ const isDark = ref(true)
 const currentLocale = computed(() => i18n.global.locale.value)
 
 const langOptions = [
+  { code: 'fa', name: t('common.languages.fa') },
   { code: 'ru', name: t('common.languages.ru') },
   { code: 'en', name: t('common.languages.en') },
   { code: 'zh', name: t('common.languages.zh') },
