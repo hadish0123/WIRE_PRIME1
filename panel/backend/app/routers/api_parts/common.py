@@ -1,6 +1,8 @@
 from typing import Annotated
+import json
 
 from fastapi import Depends, HTTPException
+from sqlalchemy import and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -18,6 +20,19 @@ async def guard_not_remnawave_managed(user: User) -> None:
             detail=REMNAWAVE_MANAGED_USER_CONFLICT_DETAIL,
         )
 
+
+def node_filter():
+    admin = current_admin()
+    if admin is None:
+        raise HTTPException(status_code=401, detail='Authentication required')
+    if is_super_admin(admin):
+        return True
+    base = Node.owner_admin_id == tenant_root(admin)
+    try:
+        ids = json.loads(admin.node_ids_json or '[]')
+    except json.JSONDecodeError:
+        ids = []
+    return and_(base, Node.id.in_(ids)) if ids else base
 
 def guard_tenant_owner(owner_admin_id: str | None) -> None:
     admin = current_admin()
@@ -50,4 +65,12 @@ async def get_scoped_node(node_id: str, db: DB) -> Node:
     if node is None:
         raise HTTPException(status_code=404, detail='Node not found')
     guard_tenant_owner(node.owner_admin_id)
+    admin = current_admin()
+    if admin and not is_super_admin(admin):
+        try:
+            ids = json.loads(admin.node_ids_json or '[]')
+        except json.JSONDecodeError:
+            ids = []
+        if ids and node.id not in ids:
+            raise HTTPException(status_code=404, detail='Resource not found')
     return node
