@@ -31,6 +31,7 @@ from app.models import (
 )
 from app.routers.api_parts.common import DB, guard_not_remnawave_managed, owner_filter, tenant_owner_for_create
 from app.services.devices import (
+    create_device,
     count_live_devices,
     device_views,
     live_device_views,
@@ -229,6 +230,11 @@ async def api_add_user(data: UserIn, db: DB):
     return user
 
 
+class ClientCreate(BaseModel):
+    name: str
+    traffic_gb: float = Field(default=0, ge=0, le=1000000)
+    days: int = Field(default=0, ge=0, le=3650)
+
 async def _user_devices_view(db: DB, user: User) -> AdminUserDevices:
     """The owner's device budget plus its live devices, from freshly read device rows."""
     return AdminUserDevices(
@@ -240,6 +246,29 @@ async def _user_devices_view(db: DB, user: User) -> AdminUserDevices:
     )
 
 
+@router.post('/users/{user_id}/clients', status_code=201)
+async def api_create_client(user_id: str, data: ClientCreate, db: DB):
+    user = await get_user_or_404(user_id, db)
+    if user.remnawave_user is not None:
+        raise HTTPException(status_code=409, detail='Remnawave-managed client cannot be modified locally')
+    owner_id = user.owner_admin_id
+    actor = __import__('app.routers.auth', fromlist=['current_admin']).current_admin()
+    if actor and actor.role != 'super_admin' and owner_id:
+        root = await db.get(Admin, owner_id)
+        requested = int(data.traffic_gb * 1024 * 1024 * 1024) if data.traffic_gb > 0 else 0
+        if root and root.traffic_quota_bytes > 0:
+            used = await db.scalar(select(func.coalesce(func.sum(User.traffic_limit_bytes), 0)).where(User.owner_admin_id == owner_id, User.id != user.id))
+            if int(used or 0) + requested > root.traffic_quota_bytes:
+                raise HTTPException(status_code=403, detail='Your traffic quota has been reached')
+        user.traffic_limit_bytes = requested
+        user.expire_at = datetime.now(UTC) + timedelta(days=data.days) if data.days > 0 else None
+        user.lifecycle_status = 'active'
+    device, node_ids = await create_device(db, user_id, name=data.name.strip())
+    await db.commit()
+    await db.refresh(device)
+    await _enqueue_sync_nodes_for_user(db, user)
+    return {'id': device.id, 'user_id': user.id, 'name': device.name, 'vpn_ip': device.vpn_ip, 'node_ids': sorted(node_ids), 'traffic_gb': data.traffic_gb, 'days': data.days}
+    
 @router.get('/users/{user_id}/devices', response_model=AdminUserDevices)
 async def api_user_devices(user_id: str, db: DB):
     """Non-secret device view of one owner: budget, live devices and per-node availability.
