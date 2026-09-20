@@ -133,7 +133,7 @@ export const usersApi = {
   },
   queryLocalUsers: applyUserQuery,
   addUser: (name: string) => req<User>('POST', '/users', { name }),
-  createClient: (userId: string, data: { name: string; traffic_gb: number; days: number }) =>
+  createClient: (userId: string, data: { name: string; node_id: string; traffic_gb: number; days: number }) =>
     req<any>('POST', `/users/${userId}/clients`, data),
   getUserDevices: (id: string) => req<AdminUserDevices>('GET', userDevicesPath(id)),
   // Only a local account's limit is written here; a Remnawave-managed owner is refused by the
