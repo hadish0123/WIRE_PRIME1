@@ -1,42 +1,44 @@
 from fastapi import Depends,HTTPException,Request
 from fastapi.security import HTTPBearer,HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
-from sqlalchemy import text
-from .db import get_db
+from .db import get_db,set_platform_context,set_tenant_context
 from .security import decode_access_token
 from .models import Admin,RoleName
 
 bearer=HTTPBearer(auto_error=False)
 
-def current_admin(request:Request,creds:HTTPAuthorizationCredentials|None=Depends(bearer),db:Session=Depends(get_db)):
- if not creds: raise HTTPException(401,"Authentication required")
- try: p=decode_access_token(creds.credentials)
- except Exception: raise HTTPException(401,"Invalid or expired token")
- if p.get("role")==RoleName.platform_owner.value:
-  db.execute(text("select set_config('app.is_platform','true',false)"))
-  db.execute(text("select set_config('app.tenant_id','',false)"))
- elif p.get("tenant_id"):
-  db.execute(text("select set_config('app.is_platform','false',false)"))
-  db.execute(text("select set_config('app.tenant_id',:tenant,false)"),{"tenant":str(p["tenant_id"])})
- else:
-  raise HTTPException(401,"Invalid tenant context")
- a=db.get(Admin,p["sub"])
- if not a or not a.enabled: raise HTTPException(401,"Account disabled")
- request.state.tenant_id=a.tenant_id;request.state.admin_id=a.id
- if a.role==RoleName.platform_owner:
-  db.execute(text("select set_config('app.is_platform','true',false)"))
-  db.execute(text("select set_config('app.tenant_id','' ,false)"))
- elif a.tenant_id:
-  db.execute(text("select set_config('app.is_platform','false',false)"))
-  db.execute(text("select set_config('app.tenant_id',:tenant,false)"),{"tenant":a.tenant_id})
- else:
-  raise HTTPException(403,"Tenant context required")
- return a
+def current_admin(
+    request:Request,
+    creds:HTTPAuthorizationCredentials|None=Depends(bearer),
+    db:Session=Depends(get_db),
+):
+    if not creds:
+        raise HTTPException(401,"Authentication required")
+    try:
+        p=decode_access_token(creds.credentials)
+    except Exception:
+        raise HTTPException(401,"Invalid or expired token")
+    a=db.get(Admin,p["sub"])
+    if not a or not a.enabled:
+        raise HTTPException(401,"Account disabled")
+
+    request.state.tenant_id=a.tenant_id
+    request.state.admin_id=a.id
+    if a.role==RoleName.platform_owner:
+        set_platform_context(db)
+    elif a.tenant_id:
+        set_tenant_context(db,a.tenant_id)
+    else:
+        raise HTTPException(403,"Tenant context required")
+
+    return a
 
 def require_tenant_manager(admin:Admin=Depends(current_admin)):
- if admin.role not in {RoleName.platform_owner,RoleName.tenant_manager}: raise HTTPException(403,"Tenant manager permission required")
- return admin
+    if admin.role not in {RoleName.platform_owner,RoleName.tenant_manager}:
+        raise HTTPException(403,"Tenant manager permission required")
+    return admin
 
 def require_platform(admin:Admin=Depends(current_admin)):
- if admin.role!=RoleName.platform_owner: raise HTTPException(403,"Platform permission required")
- return admin
+    if admin.role!=RoleName.platform_owner:
+        raise HTTPException(403,"Platform permission required")
+    return admin
