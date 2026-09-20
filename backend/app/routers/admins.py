@@ -88,6 +88,18 @@ def create_admin(body:dict,request:Request,admin:Admin=Depends(require_permissio
  db.commit();db.refresh(a)
  return _admin_row(db,a)
 
+
+@router.delete("/{admin_id}/permanent")
+def delete_admin_permanently(admin_id:str,request:Request,admin:Admin=Depends(require_permission("admins:write")),db:Session=Depends(get_db)):
+ target=db.query(Admin).filter(Admin.id==admin_id).first()
+ if not target: raise HTTPException(404,"Admin not found")
+ if target.id==admin.id: raise HTTPException(400,"Cannot delete yourself")
+ if admin.role!=RoleName.platform_owner and target.tenant_id!=admin.tenant_id: raise HTTPException(404,"Admin not found")
+ db.query(AdminInboundScope).filter(AdminInboundScope.admin_id==target.id).delete(synchronize_session=False)
+ db.query(Client).filter(Client.created_by_admin_id==target.id).update({Client.created_by_admin_id:None},synchronize_session=False)
+ db.delete(target);db.commit()
+ record(db,admin,request,"admin.delete","admin",admin_id)
+ return {"ok":True}
 @router.patch("/{admin_id}")
 def update_admin(admin_id:str,body:dict,request:Request,admin:Admin=Depends(require_permission("admins:manage")),db:Session=Depends(get_db)):
  target=db.query(Admin).filter(Admin.id==admin_id).first()
