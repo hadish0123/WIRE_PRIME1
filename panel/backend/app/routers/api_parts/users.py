@@ -1,6 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import selectinload
 
