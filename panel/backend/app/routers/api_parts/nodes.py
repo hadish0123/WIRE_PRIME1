@@ -93,9 +93,7 @@ async def api_provision_node(node_id: str, db: DB):
 
 @router.patch('/nodes/{node_id}', response_model=NodeSchema)
 async def api_update_node(node_id: str, data: NodeUpdate, db: DB):
-    node = await db.get(Node, node_id)
-    if not node:
-        raise HTTPException(status_code=404, detail='Node not found')
+    node = await get_scoped_node(node_id, db)
     for field, value in data.model_dump(exclude_unset=True).items():
         setattr(node, field, value)
     node.provision_status = 'pending'
@@ -116,6 +114,7 @@ async def api_delete_node(node_id: str, db: DB):
     # Match sync results: User -> Device -> Peer before any cascading DELETE. Do not lock Node
     # first: result writers reach its row only after ownership locks. Reclaim only the devices the
     # loader locked, never a newcomer discovered by the cascade (FK checks still govern insertion).
+    await get_scoped_node(node_id, db)
     node, peers = await load_node_with_peers(db, node_id, for_update=True)
     device_ids = {peer.device_id for peer in peers}
     await db.delete(node)
