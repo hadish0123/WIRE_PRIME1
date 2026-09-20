@@ -1,5 +1,6 @@
 import type { RouteRecordRaw } from 'vue-router'
 import { createRouter, createWebHistory } from 'vue-router'
+import AdminsView from '../views/AdminsView.vue'
 import LoginView from '../views/LoginView.vue'
 import NodeSettingsView from '../views/NodeSettingsView.vue'
 import NodesView from '../views/NodesView.vue'
@@ -10,6 +11,7 @@ import UsersView from '../views/UsersView.vue'
 const routes: RouteRecordRaw[] = [
   { path: '/', redirect: '/nodes' },
   { path: '/nodes', component: NodesView, meta: { requiresAuth: true } },
+  { path: '/admins', component: AdminsView, meta: { requiresAuth: true } },
   { path: '/nodes/:id/settings', component: NodeSettingsView, meta: { requiresAuth: true } },
   { path: '/users', component: UsersView, meta: { requiresAuth: true } },
   { path: '/users/:id', component: UsersView, meta: { requiresAuth: true } },
