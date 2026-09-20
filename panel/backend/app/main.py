@@ -2,6 +2,7 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from .error_handlers import register_error_handlers
 from .routers import api, auth, internal_worker, remnawave, telegram_proxy, user_events, user_page
@@ -23,6 +24,17 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title='AmneziaWG Panel', lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        'http://primevpn-admin-production.up.railway.app',
+        'https://primevpn-admin-production.up.railway.app',
+    ],
+    allow_credentials=True,
+    allow_methods=['*'],
+    allow_headers=['*'],
+    max_age=3600,
+)
 register_error_handlers(app)
 app.include_router(auth.router)
 app.include_router(api.webhook_router)
