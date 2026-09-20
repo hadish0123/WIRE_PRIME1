@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import secrets
+from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
@@ -28,6 +29,7 @@ BOOTSTRAP_USERNAME = os.environ.get('ADMIN_USERNAME', 'admin').strip()
 BOOTSTRAP_PASSWORD = os.environ.get('ADMIN_PASSWORD')
 _bearer = HTTPBearer()
 router = APIRouter()
+_CURRENT_ADMIN: ContextVar[Admin | None] = ContextVar('primevpn_current_admin', default=None)
 
 ROLE_PERMISSIONS = {
     'super_admin': {'*'},
@@ -66,6 +68,26 @@ def role_permissions(admin: Admin) -> set[str]:
         pass
     return set(ROLE_PERMISSIONS.get(admin.role, set()))
 
+def tenant_root(admin: Admin) -> str:
+    return admin.tenant_owner_id or admin.id
+
+def is_super_admin(admin: Admin) -> bool:
+    return admin.role == 'super_admin'
+
+def owns_tenant(admin: Admin, owner_admin_id: str | None) -> bool:
+    return is_super_admin(admin) or owner_admin_id == tenant_root(admin)
+
+def current_admin() -> Admin | None:
+    return _CURRENT_ADMIN.get()
+
+def current_tenant_id() -> str | None:
+    admin = current_admin()
+    return tenant_root(admin) if admin else None
+
+def is_current_super_admin() -> bool:
+    admin = current_admin()
+    return bool(admin and is_super_admin(admin))
+
 def has_permission(admin: Admin, permission: str) -> bool:
     return '*' in role_permissions(admin) or permission in role_permissions(admin)
 
@@ -74,7 +96,9 @@ async def bootstrap_admin(db: AsyncSession) -> None:
         return
     admin = await db.scalar(select(Admin).where(Admin.username == BOOTSTRAP_USERNAME))
     if admin is None:
-        db.add(Admin(username=BOOTSTRAP_USERNAME, password_hash=hash_password(BOOTSTRAP_PASSWORD), role='super_admin', permissions_json='[]', node_ids_json='[]'))
+        admin = Admin(username=BOOTSTRAP_USERNAME, password_hash=hash_password(BOOTSTRAP_PASSWORD), role='super_admin', permissions_json='[]', node_ids_json='[]')
+        admin.tenant_owner_id = admin.id
+        db.add(admin)
         await db.commit()
         log.info('Created PRIMEVPN bootstrap super admin %s', BOOTSTRAP_USERNAME)
 
@@ -98,6 +122,7 @@ async def require_auth(creds: Annotated[HTTPAuthorizationCredentials, Security(_
     admin = await db.get(Admin, admin_id)
     if not admin or not admin.is_active:
         raise HTTPException(status_code=401, detail='Account is inactive or no longer exists')
+    _CURRENT_ADMIN.set(admin)
     payload['_admin'] = admin
     return payload
 
