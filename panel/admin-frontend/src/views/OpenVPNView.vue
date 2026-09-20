@@ -28,9 +28,19 @@
     </section>
 
     <section class="settings-card">
+      <div class="card-head"><div><h3>اینباندهای فعال</h3><p>برای هر نود یک ورودی WireGuard/AmneziaWG و یک ورودی OpenVPN مدیریت می‌شود.</p></div></div>
+      <div class="inbound-grid">
+        <article v-for="inbound in inbounds" :key="inbound.id" class="inbound-card">
+          <div><strong>{{ inbound.name }}</strong><small>{{ inbound.node_name }} · {{ inbound.protocol }}</small></div>
+          <Tag :value="inbound.enabled ? 'فعال' : 'آماده'" :severity="inbound.enabled ? 'success' : 'secondary'" />
+        </article>
+      </div>
+    </section>
+
+    <section class="settings-card">
       <div class="card-head"><div><h3>ساخت کلاینت</h3><p>اینباند، نام، حجم و مدت اعتبار را تعیین کنید.</p></div></div>
       <div class="form-grid">
-        <label>اینباند<select v-model="client.node_id"><option v-for="n in nodes" :key="n.id" :value="n.id">{{ n.name }} · OpenVPN</option></select></label>
+        <label>اینباند<select v-model="client.inbound_id"><option v-for="inbound in openvpnInbounds" :key="inbound.id" :value="inbound.id">{{ inbound.node_name }} · {{ inbound.name }}</option></select></label>
         <label>کاربر موجود (اختیاری)<select v-model="client.user_id"><option value="">ساخت کاربر جدید</option><option v-for="u in users" :key="u.id" :value="u.id">{{ u.name }}</option></select></label>
         <label>نام کلاینت<input v-model="client.name" placeholder="iphone-01" /></label>
         <label>حجم (GB)<input v-model.number="client.traffic_gb" type="number" min="0" placeholder="0 = نامحدود" /></label>
@@ -59,7 +69,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import Button from 'primevue/button'
 import Dialog from 'primevue/dialog'
 import Tag from 'primevue/tag'
@@ -70,21 +80,25 @@ import { req } from '../api/client'
 type Item={id:string;name:string}
 const toast=useToast()
 type NodeItem=Item&{server_endpoint?:string|null;url?:string}
-const nodes=ref<NodeItem[]>([]), users=ref<Item[]>([]), clients=ref<OpenVPNClient[]>([]), saving=ref(false), showWireGuardInfo=ref(false)
+const nodes=ref<NodeItem[]>([]), users=ref<Item[]>([]), clients=ref<OpenVPNClient[]>([]), inbounds=ref<any[]>([]), saving=ref(false), showWireGuardInfo=ref(false)
 const server=reactive({node_id:'',endpoint:'',port:1194,protocol:'udp' as 'udp'|'tcp-server',network:'10.9.0.0/24'})
-const client=reactive({user_id:'',node_id:'',name:'',traffic_gb:0,days:0})
+const client=reactive({user_id:'',inbound_id:'',node_id:'',name:'',traffic_gb:0,days:0})
+const openvpnInbounds = computed(()=>inbounds.value.filter((x:any)=>x.protocol==='openvpn'))
 const nodeName=(id:string)=>nodes.value.find(n=>n.id===id)?.name||id
 
 async function load(){
   nodes.value=(await req<NodeItem[]>('GET','/nodes'))||[]
   users.value=((await req<any[]>('GET','/users'))||[]).map(u=>({id:u.id,name:u.name}))
   clients.value=(await openvpnApi.list())||[]
+  inbounds.value=(await req<any[]>('GET','/inbounds'))||[]
   if(!server.node_id&&nodes.value[0]) server.node_id=nodes.value[0].id
-  if(!client.node_id&&nodes.value[0]) client.node_id=nodes.value[0].id
+  if(!client.inbound_id&&openvpnInbounds.value[0]) client.inbound_id=openvpnInbounds.value[0].id
+  if(client.inbound_id) client.node_id=client.inbound_id.split(':')[1]
   if(!server.endpoint&&nodes.value[0]) server.endpoint=nodes.value[0].server_endpoint||nodes.value[0].url?.replace(/^https?:\/\//,'').split(':')[0]||''
 }
 async function configure(){saving.value=true;try{await openvpnApi.configure(server);toast.add({severity:'success',summary:'اینباند ذخیره شد',life:2500})}finally{saving.value=false}}
 async function createClient(){
+  if(client.inbound_id) client.node_id=client.inbound_id.split(':')[1]
   saving.value=true
   try{
     await openvpnApi.create({user_id:client.user_id,node_id:client.node_id,name:client.name,traffic_gb:client.traffic_gb,days:client.days} as any)
@@ -102,6 +116,6 @@ onMounted(load)
 .settings-card{display:grid;gap:1rem;margin-bottom:1rem;padding:1.2rem;border:1px solid var(--app-border-strong);border-radius:var(--app-radius-lg);background:var(--app-shell-solid);box-shadow:var(--app-shadow)}
 .card-head{display:flex;justify-content:space-between;align-items:flex-start;gap:1rem}.card-head h3{margin:0 0 .25rem}.card-head p{margin:0;color:var(--app-text-soft);font-size:.82rem}
 .form-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.85rem}.form-grid label{display:grid;gap:.4rem;font-size:.78rem;color:var(--app-text-muted);font-weight:800}.form-grid input,.form-grid select{width:100%;padding:.68rem;border:1px solid var(--app-border-strong);border-radius:10px;background:var(--app-surface-raised);color:var(--app-text)}
-.protocol-actions,.actions{display:flex;gap:.55rem;flex-wrap:wrap}.client-row{display:flex;justify-content:space-between;align-items:center;gap:1rem;padding:.85rem;border:1px solid var(--app-border);border-radius:12px}.client-row small{display:block;color:var(--app-text-soft);margin-top:.2rem}.empty,.info-box{padding:1rem;border:1px dashed var(--app-border);border-radius:12px;color:var(--app-text-muted)}
-@media(max-width:850px){.form-grid{grid-template-columns:1fr 1fr}}@media(max-width:600px){.form-grid{grid-template-columns:1fr}.client-row{align-items:stretch;flex-direction:column}.actions>*{flex:1}}
+.protocol-actions,.actions{display:flex;gap:.55rem;flex-wrap:wrap}.client-row{display:flex;justify-content:space-between;align-items:center;gap:1rem;padding:.85rem;border:1px solid var(--app-border);border-radius:12px}.inbound-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.7rem}.inbound-card{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.85rem;border:1px solid var(--app-border);border-radius:12px;background:var(--app-surface-raised)}.inbound-card small{display:block;color:var(--app-text-soft);margin-top:.2rem}.client-row small{display:block;color:var(--app-text-soft);margin-top:.2rem}.empty,.info-box{padding:1rem;border:1px dashed var(--app-border);border-radius:12px;color:var(--app-text-muted)}
+@media(max-width:850px){.inbound-grid{grid-template-columns:1fr}.form-grid{grid-template-columns:1fr 1fr}}@media(max-width:600px){.form-grid{grid-template-columns:1fr}.client-row{align-items:stretch;flex-direction:column}.actions>*{flex:1}}
 </style>
