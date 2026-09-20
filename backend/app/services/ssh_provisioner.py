@@ -17,17 +17,19 @@ async def install_node_agent(host:str,port:int,username:str,password:str,node_id
         raise SSHProvisionError("Invalid server address")
     script=f'''set -eu
 export DEBIAN_FRONTEND=noninteractive
+
 if command -v apt-get >/dev/null 2>&1; then
   apt-get update -y
-  apt-get install -y python3 python3-venv python3-pip curl openssl wireguard-tools openvpn
+  apt-get install -y python3 python3-venv python3-pip curl openssl iproute2 wireguard-tools openvpn
 elif command -v dnf >/dev/null 2>&1; then
-  dnf install -y python3 python3-pip curl openssl wireguard-tools openvpn
+  dnf install -y python3 python3-pip curl openssl iproute2 wireguard-tools openvpn
 elif command -v yum >/dev/null 2>&1; then
-  yum install -y python3 python3-pip curl openssl wireguard-tools openvpn
+  yum install -y python3 python3-pip curl openssl iproute2 wireguard-tools openvpn
 else
   echo "Unsupported Linux distribution" >&2
   exit 20
 fi
+
 mkdir -p /opt/primevpn-node-agent /etc/primevpn
 python3 -m venv /opt/primevpn-node-agent/venv
 /opt/primevpn-node-agent/venv/bin/pip install --upgrade pip
@@ -35,15 +37,26 @@ curl -fsSL {_q(RAW_BASE+"/pyproject.toml")} -o /opt/primevpn-node-agent/pyprojec
 curl -fsSL {_q(RAW_BASE+"/app.py")} -o /opt/primevpn-node-agent/app.py
 curl -fsSL {_q(RAW_BASE+"/agent_security.py")} -o /opt/primevpn-node-agent/agent_security.py
 /opt/primevpn-node-agent/venv/bin/pip install --no-cache-dir fastapi 'uvicorn[standard]' pydantic 'PyJWT[crypto]' cryptography
+
 PORT=443
-if ss -ltn 2>/dev/null | grep -qE '[:.]443[[:space:]]'; then PORT=9443; fi
-openssl req -x509 -nodes -newkey ed25519 -days 825 -keyout /etc/primevpn/agent.key -out /etc/primevpn/agent.crt -subj {_q("/CN="+host)} -addext {_q("subjectAltName=IP:"+host)}
+if ss -ltn 2>/dev/null | grep -qE 'LISTEN[[:space:]].*(:|\\.)443([[:space:]]|$)'; then PORT=9443; fi
+
+if printf '%s' {_q(host)} | grep -Eq '^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$'; then
+  SAN="subjectAltName=IP:{_q(host)}"
+else
+  SAN="subjectAltName=DNS:{_q(host)}"
+fi
+openssl req -x509 -nodes -newkey ed25519 -days 825 \
+  -keyout /etc/primevpn/agent.key -out /etc/primevpn/agent.crt \
+  -subj {_q("/CN="+host)} -addext "$SAN"
 chmod 600 /etc/primevpn/agent.key
+
 cat > /etc/primevpn/agent.env <<EOF
 PRIMEVPN_AGENT_VERIFY_PUBLIC_KEY={_q(verify_key)}
 PRIMEVPN_NODE_ID={_q(node_id)}
 EOF
 chmod 600 /etc/primevpn/agent.env
+
 cat > /etc/systemd/system/primevpn-node-agent.service <<EOF
 [Unit]
 Description=PRIMEVPN Node Agent
@@ -54,17 +67,31 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=/opt/primevpn-node-agent
 EnvironmentFile=/etc/primevpn/agent.env
-ExecStart=/opt/primevpn-node-agent/venv/bin/uvicorn app:app --host 0.0.0.0 --port ${{PORT}} --ssl-keyfile /etc/primevpn/agent.key --ssl-certfile /etc/primevpn/agent.crt
+ExecStart=/opt/primevpn-node-agent/venv/bin/uvicorn app:app --host 0.0.0.0 --port \${PORT} --ssl-keyfile /etc/primevpn/agent.key --ssl-certfile /etc/primevpn/agent.crt
 Restart=always
 RestartSec=3
 
 [Install]
 WantedBy=multi-user.target
 EOF
+
 systemctl daemon-reload
 systemctl enable --now primevpn-node-agent.service
-printf 'PORT=%s\\n' "${{PORT}}"
+
+sleep 2
 systemctl is-active --quiet primevpn-node-agent.service
+curl -kfsS --max-time 10 "https://127.0.0.1:\${PORT}/healthz" >/dev/null
+
+# Open the selected Agent port when a host firewall is enabled.
+if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
+  ufw allow "\${PORT}/tcp" >/dev/null
+fi
+if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
+  firewall-cmd --permanent --add-port="\${PORT}/tcp" >/dev/null
+  firewall-cmd --reload >/dev/null
+fi
+
+printf 'PORT=%s\\n' "\${PORT}"
 '''
     try:
         async with asyncssh.connect(host,port=port,username=username,password=password,known_hosts=None,login_timeout=20,connect_timeout=20) as conn:
