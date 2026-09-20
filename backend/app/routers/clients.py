@@ -5,7 +5,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 from ..db import get_db
 from ..deps import current_admin, require_tenant_manager
-from ..models import Admin, Client, Device, Inbound, InboundOpenVPN, ClientCredential, ResourceState, Protocol, Node, TrafficUsage, Session as ClientSession, Quota
+from ..models import Admin, Client, Device, Inbound, InboundOpenVPN, ClientCredential, ResourceState, Protocol, Node, TrafficUsage, TrafficSnapshot, Session as ClientSession, Quota
 from ..schemas import ClientIn, ClientOut, ClientDetailOut, ClientUpdateIn, DeviceOut
 from ..services.audit import record
 from ..services.agent_client import revoke_wireguard_peer, deploy_openvpn_crl
@@ -43,9 +43,26 @@ def _detail(db,c,now):
  if q:
   qstate="NORMAL"
   qexp=_normalize_expiry(q.expires_at)
+  snap=db.query(TrafficSnapshot).filter(TrafficSnapshot.client_id==c.id,TrafficSnapshot.tenant_id==c.tenant_id,TrafficSnapshot.captured_at>=now.replace(hour=0,minute=0,second=0,microsecond=0)).order_by(TrafficSnapshot.captured_at).all()
+  daily_used=0;monthly_used=0
+  if snap:
+   prev=None
+   for s in snap:
+    cur=(int(s.bytes_in),int(s.bytes_out))
+    if prev:daily_used+=max(0,cur[0]-prev[0])+max(0,cur[1]-prev[1])
+    prev=cur
+  msince=now.replace(day=1,hour=0,minute=0,second=0,microsecond=0)
+  msnap=db.query(TrafficSnapshot).filter(TrafficSnapshot.client_id==c.id,TrafficSnapshot.tenant_id==c.tenant_id,TrafficSnapshot.captured_at>=msince).order_by(TrafficSnapshot.captured_at).all()
+  prev=None
+  for s in msnap:
+   cur=(int(s.bytes_in),int(s.bytes_out))
+   if prev:monthly_used+=max(0,cur[0]-prev[0])+max(0,cur[1]-prev[1])
+   prev=cur
   if qexp and qexp<=now:qstate="LIMIT_REACHED"
   elif q.total_bytes is not None and used>=q.total_bytes:qstate="LIMIT_REACHED"
-  elif q.total_bytes and used>=q.total_bytes*q.warning_ratio/100:qstate="WARNING"
+  elif q.daily_bytes is not None and daily_used>=q.daily_bytes:qstate="LIMIT_REACHED"
+  elif q.monthly_bytes is not None and monthly_used>=q.monthly_bytes:qstate="LIMIT_REACHED"
+  elif (q.total_bytes and used>=q.total_bytes*q.warning_ratio/100) or (q.daily_bytes and daily_used>=q.daily_bytes*q.warning_ratio/100) or (q.monthly_bytes and monthly_used>=q.monthly_bytes*q.warning_ratio/100):qstate="WARNING"
  status=c.status.value if hasattr(c.status,"value") else str(c.status)
  exp=_normalize_expiry(c.expires_at)
  if status=="ACTIVE" and exp and exp<=now:status="EXPIRED"
