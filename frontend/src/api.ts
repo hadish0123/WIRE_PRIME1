@@ -3,7 +3,7 @@ export async function api<T>(path:string,init:RequestInit={}):Promise<T>{
  const token=localStorage.getItem("primevpn_access");const headers=new Headers(init.headers);
  if(init.body)headers.set("Content-Type","application/json");if(token)headers.set("Authorization","Bearer "+token);
  const r=await fetch(base+path,{...init,headers});
- if(r.status===401){localStorage.removeItem("primevpn_access");window.location.reload()}
+ if(r.status===401){localStorage.removeItem("primevpn_access")}
  if(!r.ok){const e=await r.json().catch(()=>({detail:r.statusText}));throw new Error(e.detail||e.message||r.statusText)}
  return r.status===204?undefined as T:await r.json()
 }
