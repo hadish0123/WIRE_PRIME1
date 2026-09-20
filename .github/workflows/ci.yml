@@ -18,7 +18,7 @@ jobs:
    - uses: actions/setup-node@v4
      with: {node-version: "22"}
    - run: npm install
-   - run: npm run build
+   - run: npm run typecheck\n   - run: npm run build
  node_agent:
   runs-on: ubuntu-latest
   defaults: {run: {working-directory: node-agent}}
