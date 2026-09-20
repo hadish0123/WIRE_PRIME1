@@ -333,7 +333,7 @@ async def _insert_device_with_unique_ip(
     raise DeviceIpAllocationError(MAX_IP_ALLOCATION_ATTEMPTS)
 
 
-async def create_device(db: AsyncSession, user_id: str, *, name: str) -> tuple[Device, set[str]]:
+async def create_device(db: AsyncSession, user_id: str, *, name: str, node_ids: Iterable[str] | None = None) -> tuple[Device, set[str]]:
     """Create a named device with fresh credentials, plus pending peers on every node.
 
     Returns the device and the node ids that now have a pending peer for it, so the caller can queue
@@ -362,7 +362,7 @@ async def create_device(db: AsyncSession, user_id: str, *, name: str) -> tuple[D
         db, user_id=user_id, name=name, public_key=public_key, private_key=private_key
     )
     owner = await db.get(User, user_id)
-    node_ids = await create_pending_peers_for_device(db, device, owner_admin_id=owner.owner_admin_id if owner else None)
+    node_ids = await create_pending_peers_for_device(db, device, node_ids=node_ids, owner_admin_id=owner.owner_admin_id if owner else None)
     return device, node_ids
 
 
