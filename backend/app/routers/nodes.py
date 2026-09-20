@@ -7,6 +7,7 @@ from ..models import Admin,Node,NodeState,ProvisioningTask
 from ..schemas import NodeIn,NodeOut
 from ..services.audit import record
 from ..security import new_bootstrap_token
+from ..config import settings
 router=APIRouter()
 
 @router.get("",response_model=list[NodeOut])
@@ -16,6 +17,7 @@ def list_nodes(admin:Admin=Depends(current_admin),db:Session=Depends(get_db)):
 @router.post("",response_model=NodeOut)
 def create_node(data:NodeIn,request:Request,admin:Admin=Depends(require_tenant_manager),db:Session=Depends(get_db)):
  if not admin.tenant_id: raise HTTPException(400,"Tenant required")
+ if settings.environment=="production" and data.agent_url and not data.agent_url.startswith("https://"): raise HTTPException(422,"Production Node Agent URL must use HTTPS")
  n=Node(tenant_id=admin.tenant_id,name=data.name,address=data.address,agent_url=data.agent_url)
  db.add(n);db.flush();record(db,admin,request,"node.create","node",n.id);db.commit();db.refresh(n);return n
 
