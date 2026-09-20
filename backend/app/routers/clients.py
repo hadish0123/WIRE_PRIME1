@@ -1,5 +1,6 @@
 from fastapi import APIRouter,Depends,HTTPException,Request
 from datetime import datetime,timezone
+import ipaddress
 from sqlalchemy.orm import Session
 from ..db import get_db
 from ..deps import current_admin,require_tenant_manager
@@ -20,6 +21,12 @@ def list_clients(admin:Admin=Depends(current_admin),db:Session=Depends(get_db)):
 def create_client(data:ClientIn,request:Request,admin:Admin=Depends(require_tenant_manager),db:Session=Depends(get_db)):
  inbound=db.query(Inbound).filter(Inbound.id==data.inbound_id,Inbound.tenant_id==admin.tenant_id).first()
  if not inbound:raise HTTPException(404,"Inbound not found")
+ try:
+  assigned=ipaddress.ip_interface(data.assigned_address)
+  network=ipaddress.ip_network(inbound.network,strict=False)
+  if assigned.ip not in network:raise HTTPException(422,"Assigned address is outside inbound network")
+ except ValueError:raise HTTPException(422,"Invalid assigned address")
+ if db.query(Client).filter(Client.inbound_id==inbound.id,Client.assigned_address==data.assigned_address,Client.tenant_id==admin.tenant_id).first():raise HTTPException(409,"Assigned address already in use")
  c=Client(tenant_id=admin.tenant_id,**data.model_dump());db.add(c);db.flush();record(db,admin,request,"client.create","client",c.id);db.commit();db.refresh(c);return c
 
 @router.post("/{client_id}/revoke")
