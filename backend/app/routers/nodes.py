@@ -3,7 +3,7 @@ from datetime import datetime,timezone,timedelta
 import ipaddress
 from sqlalchemy.orm import Session
 from ..db import get_db
-from ..deps import current_admin,require_tenant_manager
+from ..deps import current_admin,require_tenant_manager,require_permission
 from ..models import Admin,Node,NodeState,ProvisioningTask
 from ..schemas import NodeIn,NodeOut,AutoNodeIn
 from ..services.ssh_provisioner import install_node_agent,verify_agent,SSHProvisionError
@@ -14,7 +14,7 @@ from ..config import settings
 router=APIRouter()
 
 @router.get("",response_model=list[NodeOut])
-def list_nodes(admin:Admin=Depends(current_admin),db:Session=Depends(get_db)):
+def list_nodes(admin:Admin=Depends(require_permission("nodes:read")),db:Session=Depends(get_db)):
  return db.query(Node).filter(Node.tenant_id==admin.tenant_id).order_by(Node.created_at.desc()).all()
 
 @router.post("",response_model=NodeOut)
