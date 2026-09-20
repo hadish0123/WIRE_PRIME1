@@ -108,7 +108,8 @@ async function load(){loading.value=true;try{
   isRep?Promise.resolve([]):audit.list(),
   isRep?Promise.resolve([]):quotas.overview()
  ]);
- nodeRows.value=n;inboundRows.value=i;clientRows.value=c;trafficData.value=t;quotaRows.value=q;auditRows.value=auditData;\n if(me.value.role!=="tenant_operator"&&me.value.role!=="representative"&&me.value.tenant_id){try{const sr=await settings.get();settingsData.value=sr;settingsDraft.value={...sr.settings}}catch(e){notice.value=e instanceof Error?e.message:"خطای Settings API"}}
+ nodeRows.value=n;inboundRows.value=i;clientRows.value=c;trafficData.value=t;quotaRows.value=q;auditRows.value=auditData;
+ if(me.value.role!=="tenant_operator"&&me.value.role!=="representative"&&me.value.tenant_id){try{const sr=await settings.get();settingsData.value=sr;settingsDraft.value={...sr.settings}}catch(e){notice.value=e instanceof Error?e.message:"خطای Settings API"}}
  if(me.value.role!=="tenant_operator"&&me.value.role!=="representative"){adminRows.value=await admins.list();adminInboundRows.value=await admins.inbounds()}
  if(isRep){adminInboundRows.value=await admins.myInbounds();section.value="clients"}
 }catch(e){if(localStorage.getItem("primevpn_access"))loginError.value=e instanceof Error?e.message:"خطای API"}finally{loading.value=false;booting.value=false}}
