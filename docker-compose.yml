@@ -1,0 +1,10 @@
+services:
+  api:
+    build: ./backend
+    ports: ["8000:8000"]
+  worker:
+    build: ./backend
+    command: python -m app.worker
+  frontend:
+    build: ./frontend
+    ports: ["8080:80"]
