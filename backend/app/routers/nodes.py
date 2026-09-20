@@ -4,7 +4,7 @@ import ipaddress
 from sqlalchemy.orm import Session
 from ..db import get_db
 from ..deps import current_admin,require_tenant_manager,require_permission
-from ..models import Admin,Node,NodeState,ProvisioningTask
+from ..models import Admin,Node,NodeState,ProvisioningTask,Inbound
 from ..schemas import NodeIn,NodeOut,AutoNodeIn
 from ..services.ssh_provisioner import install_node_agent,verify_agent,SSHProvisionError
 import json
@@ -52,6 +52,17 @@ async def auto_provision(data:AutoNodeIn,request:Request,admin:Admin=Depends(req
   n.state=NodeState.provision_failed
   db.commit()
   raise HTTPException(502,f"Automatic Node provisioning failed: {e}")
+
+@router.delete("/{node_id}")
+def delete_node(node_id:str,request:Request,admin:Admin=Depends(require_tenant_manager),db:Session=Depends(get_db)):
+ n=db.query(Node).filter(Node.id==node_id,Node.tenant_id==admin.tenant_id).first()
+ if not n: raise HTTPException(404,"Node not found")
+ if db.query(Inbound).filter(Inbound.node_id==n.id,Inbound.tenant_id==admin.tenant_id).first():
+  raise HTTPException(409,"Cannot delete a Node that still has Inbounds. Remove its Inbounds first.")
+ name=n.name
+ db.delete(n);db.commit()
+ record(db,admin,request,"node.delete","node",node_id,details={"name":name});db.commit()
+ return {"status":"DELETED","node_id":node_id}
 
 @router.post("/{node_id}/provision")
 def provision(node_id:str,request:Request,admin:Admin=Depends(require_tenant_manager),db:Session=Depends(get_db)):
