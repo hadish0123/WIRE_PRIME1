@@ -93,11 +93,16 @@ def sync_node(db,node,agent_client):
         node.state=NodeState.syncing
     desired=desired_node_state(db,node)
     for item in desired["inbounds"]:
-        if not item.get("enabled") or item.get("desired_state")!="ACTIVE": continue
-        if item["protocol"] not in caps or not caps.get(item["protocol"]): continue
-        if item["protocol"] in {"wireguard","amneziawg"} and item.get("config"):
+        if not item.get("enabled") or item.get("desired_state")!="ACTIVE":
+            agent_client.remove(node,item["protocol"],item["interface"])
+            continue
+        if not caps.get(item["protocol"],False):
+            raise RuntimeError(f"Node lacks required capability: {item['protocol']}")
+        if item["protocol"] in {"wireguard","amneziawg"}:
+            if not item.get("config"): raise RuntimeError(f"Missing {item['protocol']} configuration for {item['interface']}")
             agent_client.call(node,"POST","apply",{"protocol":item["protocol"],"interface":item["interface"],"config":item["config"]})
-        elif item["protocol"]=="openvpn" and item.get("openvpn"):
-            agent_client.call(node,"apply","apply",{}) if False else agent_client.apply_openvpn(node,item["interface"],item["openvpn"])
+        elif item["protocol"]=="openvpn":
+            if not item.get("openvpn"): raise RuntimeError(f"Missing OpenVPN configuration for {item['interface']}")
+            agent_client.apply_openvpn(node,item["interface"],item["openvpn"])
     node.state=NodeState.ready
     return desired
