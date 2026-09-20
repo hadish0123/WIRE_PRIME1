@@ -13,6 +13,7 @@
             <span class="brand-subtitle">{{ $t('app.subtitle') }}</span>
           </div>
         </div>
+        </div>
         <div class="topbar-actions">
           <Select
             :modelValue="currentLocale"
