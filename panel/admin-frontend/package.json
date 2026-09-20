@@ -1,6 +1,6 @@
 {
   "name": "primevpn-panel",
-  "version": "0.1.0",
+  "version": "100.0.0",
   "private": true,
   "scripts": {
     "dev": "vite",
