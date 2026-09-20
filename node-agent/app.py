@@ -133,7 +133,7 @@ class OpenVPNRevoke(BaseModel):
 @app.post("/openvpn/crl")
 def openvpn_crl(data:OpenVPNRevoke,x_agent_token:str|None=Header(default=None)):
  auth(x_agent_token,"write");safe_interface(data.instance)
- base="/etc/primevpn";os.makedirs(base,mode=0o700,exist_ok=True);path=f"{base}/{data.instance}.crl";tmp=path+".new"
+ base="/etc/primevpn";os.makedirs(base,mode=0o700,exist_ok=True);path=f"{base}/{data.instance}.crl.pem";tmp=path+".new"
  try:
   with open(tmp,"w",encoding="utf-8") as f:f.write(data.crl_pem)
   os.chmod(tmp,0o600);os.replace(tmp,path)
