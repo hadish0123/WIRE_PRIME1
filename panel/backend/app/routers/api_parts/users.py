@@ -254,16 +254,16 @@ async def api_create_client(user_id: str, data: ClientCreate, db: DB):
         raise HTTPException(status_code=409, detail='Remnawave-managed client cannot be modified locally')
     owner_id = user.owner_admin_id
     actor = __import__('app.routers.auth', fromlist=['current_admin']).current_admin()
+    requested = int(data.traffic_gb * 1024 * 1024 * 1024) if data.traffic_gb > 0 else 0
     if actor and actor.role != 'super_admin' and owner_id:
         root = await db.get(Admin, owner_id)
-        requested = int(data.traffic_gb * 1024 * 1024 * 1024) if data.traffic_gb > 0 else 0
         if root and root.traffic_quota_bytes > 0:
             used = await db.scalar(select(func.coalesce(func.sum(User.traffic_limit_bytes), 0)).where(User.owner_admin_id == owner_id, User.id != user.id))
             if int(used or 0) + requested > root.traffic_quota_bytes:
                 raise HTTPException(status_code=403, detail='Your traffic quota has been reached')
-        user.traffic_limit_bytes = requested
-        user.expire_at = datetime.now(UTC) + timedelta(days=data.days) if data.days > 0 else None
-        user.lifecycle_status = 'active'
+    user.traffic_limit_bytes = requested
+    user.expire_at = datetime.now(UTC) + timedelta(days=data.days) if data.days > 0 else None
+    user.lifecycle_status = 'active'
     device, node_ids = await create_device(db, user_id, name=data.name.strip())
     await db.commit()
     await db.refresh(device)
