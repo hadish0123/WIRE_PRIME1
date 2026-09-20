@@ -237,7 +237,7 @@ onMounted(load);
 </div>
 <aside class="settings-side"><div class="settings-summary"><div class="settings-summary-logo">P</div><h3>{{settingsDraft.panel_name||'PRIMEVPN'}}</h3><small>Control Plane v1.0.0</small><div class="settings-status"><i></i> Tenant Configuration Active</div><dl><div><dt>Protocol</dt><dd>{{settingsDraft.default_protocol}}</dd></div><div><dt>DNS</dt><dd>{{settingsDraft.default_dns}}</dd></div><div><dt>Language</dt><dd>{{settingsDraft.language==='fa'?'فارسی':'English'}}</dd></div><div><dt>Quota</dt><dd>{{settingsDraft.default_client_quota_gb||0}} GB</dd></div></dl></div><div class="settings-checklist"><h3>Configuration Checklist</h3><div><i>✓</i><span>Tenant isolation</span></div><div><i>✓</i><span>RBAC & permissions</span></div><div><i>✓</i><span>Audit logging</span></div><div><i>✓</i><span>Secure API</span></div></div></aside>
 </div><div v-else class="empty">تنظیمات در حال بارگذاری است…</div>
-</section></section>
+</section>
 </main>
 </div>
 <div v-if="modal" class="modal-backdrop"><div class="modal">
