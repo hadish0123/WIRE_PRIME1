@@ -59,6 +59,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         iproute2 \
         iptables \
         openssl \
+        openvpn \
+        easy-rsa \
         procps \
     && rm -rf /var/lib/apt/lists/*
 
@@ -77,8 +79,8 @@ COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
 RUN chmod +x /usr/local/bin/tunnel.sh /usr/local/bin/mtproxy.sh
 
-VOLUME ["/etc/amnezia/amneziawg"]
+VOLUME ["/etc/amnezia/amneziawg", "/etc/openvpn"]
 
-EXPOSE 51820/udp 8000 443/tcp
+EXPOSE 51820/udp 1194/udp 8000 443/tcp
 
 CMD ["supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
