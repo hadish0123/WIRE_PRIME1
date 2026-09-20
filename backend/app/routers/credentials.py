@@ -36,7 +36,10 @@ def issue(client_id:str,admin:Admin=Depends(current_admin),db:Session=Depends(ge
   existing=db.query(InboundWireGuard).filter(InboundWireGuard.inbound_id==inbound.id).first()
   if not existing:raise HTTPException(409,"WireGuard inbound keys are not initialized")
   material={"private_key":private,"assigned_address":device.assigned_address}
-  payload=f"[Interface]\nPrivateKey = {private}\nAddress = {device.assigned_address}\nDNS = {inbound.dns or '1.1.1.1'}\n\n[Peer]\nPublicKey = {existing.server_public_key}\nAllowedIPs = 0.0.0.0/0, ::/0\nEndpoint = {node.address}:{inbound.listen_port}\n"
+  awg_params=""
+  if inbound.protocol==Protocol.amneziawg:
+   awg_params=f"\nJc = 7\nJmin = 8\nJmax = 80\nS1 = {existing.amnezia_s1}\nS2 = {existing.amnezia_s2}\nS3 = {existing.amnezia_s3}\nS4 = {existing.amnezia_s4}\nH1 = {existing.amnezia_h1}\nH2 = {existing.amnezia_h2}\nH3 = {existing.amnezia_h3}\nH4 = {existing.amnezia_h4}"
+  payload=f"[Interface]\nPrivateKey = {private}\nAddress = {device.assigned_address}\nDNS = {inbound.dns or '1.1.1.1'}{awg_params}\n\n[Peer]\nPublicKey = {existing.server_public_key}\nAllowedIPs = 0.0.0.0/0, ::/0\nEndpoint = {node.address}:{inbound.listen_port}\n"
  else:
   cert_key_source=db.query(InboundOpenVPN).filter(InboundOpenVPN.inbound_id==inbound.id).first()
   ov=cert_key_source
