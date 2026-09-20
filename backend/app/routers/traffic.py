@@ -57,13 +57,15 @@ def breakdown(days:int=Query(default=7,ge=1,le=90),protocol:str|None=None,node_i
     if inbound_id:q=q.filter(TrafficUsage.inbound_id==inbound_id)
     if client_id:q=q.filter(TrafficUsage.client_id==client_id)
     rows=q.all()
+    names={x.id:x.name for x in db.query(Client).filter(Client.tenant_id==admin.tenant_id).all()}
+    protocols={x.id:(x.protocol.value if hasattr(x.protocol,"value") else str(x.protocol)) for x in db.query(Inbound).filter(Inbound.tenant_id==admin.tenant_id).all()}
     out={}
     for r in rows:
         key=r.client_id
         item=out.setdefault(key,{"client_id":r.client_id,"client_name":None,"node_id":r.node_id,"inbound_id":r.inbound_id,"protocol":None,"bytes_in":0,"bytes_out":0})
         item["bytes_in"]+=int(r.bytes_in);item["bytes_out"]+=int(r.bytes_out)
-        if item["client_name"] is None:item["client_name"]=r.client.name if getattr(r,"client",None) else "—"
-        item["protocol"]=r.inbound.protocol.value if hasattr(r.inbound.protocol,"value") else str(r.inbound.protocol)
+        if item["client_name"] is None:item["client_name"]=names.get(r.client_id,"—")
+        item["protocol"]=protocols.get(r.inbound_id,"—")
     result=list(out.values())
     for x in result:x["total_bytes"]=x["bytes_in"]+x["bytes_out"]
     result.sort(key=lambda x:x["total_bytes"],reverse=True)
