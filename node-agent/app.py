@@ -1,4 +1,4 @@
-import os,subprocess,shutil
+import os,subprocess,shutil,re\nfrom agent_security import verify_control_token,require_scope
 from datetime import datetime,timezone
 from fastapi import FastAPI,Header,HTTPException
 from pydantic import BaseModel,Field
@@ -9,9 +9,9 @@ def auth(token):
  if not TOKEN or token!=TOKEN:raise HTTPException(401,"Agent authentication failed")
 def caps():return {"wireguard":shutil.which("wg") is not None,"amneziawg":shutil.which("awg") is not None,"openvpn":shutil.which("openvpn") is not None}
 @app.get("/health")
-def health(x_agent_token:str|None=Header(default=None)):auth(x_agent_token);return {"status":"READY","version":VERSION,"capabilities":caps(),"time":datetime.now(timezone.utc).isoformat()}
+def health(x_agent_token:str|None=Header(default=None)):auth(x_agent_token,"read");return {"status":"READY","version":VERSION,"capabilities":caps(),"time":datetime.now(timezone.utc).isoformat()}
 @app.get("/capabilities")
-def capabilities(x_agent_token:str|None=Header(default=None)):auth(x_agent_token);return caps()
+def capabilities(x_agent_token:str|None=Header(default=None)):auth(x_agent_token,"read");return caps()
 @app.post("/validate")
 def validate(data:ApplyConfig,x_agent_token:str|None=Header(default=None)):
  auth(x_agent_token)
