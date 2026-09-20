@@ -51,6 +51,8 @@ class Admin(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Tenant root. Super-admin owns the platform; managers own isolated tenants.
+    tenant_owner_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
 
 
 class Node(Base):
@@ -72,6 +74,8 @@ class Node(Base):
     sync_error: Mapped[str | None] = mapped_column(String, nullable=True)
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     provision_status: Mapped[str] = mapped_column(String, default='pending', nullable=False)
+    # Tenant that owns this node.
+    owner_admin_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
 
     # Set by panel on provisioning
     private_key: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -129,6 +133,8 @@ class User(Base):
     # Local device policy. 0 means unlimited; ignored for Remnawave-managed users, which use the
     # imported hwid_device_limit instead.
     device_limit: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # Tenant that owns this client account.
+    owner_admin_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
 
     # Legacy single-keypair columns, retained while ownership moves to Device. The operational
     # core (devices, peers, node payloads) must not read or write these.
@@ -208,6 +214,7 @@ class OpenVPNClient(Base):
     status: Mapped[str] = mapped_column(String, nullable=False, default='active')
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    owner_admin_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
 
     user: Mapped[User] = relationship('User')
     node: Mapped[Node] = relationship('Node')
