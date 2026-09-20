@@ -61,7 +61,6 @@ async function refreshTraffic(){
  }catch(e){notice.value=e instanceof Error?e.message:"بروزرسانی ترافیک ناموفق"}finally{loading.value=false}
 }
 async function loadTrafficView(){
- loading.value=true;
  try{
   trafficData.value=await traffic.summary(trafficDays.value);
   const params=new URLSearchParams();
@@ -70,7 +69,7 @@ async function loadTrafficView(){
   if(trafficInbound.value)params.set("inbound_id",trafficInbound.value);
   trafficBreakdown.value=await traffic.breakdown(trafficDays.value,params.toString());
   quotaRows.value=await quotas.overview();
- }catch(e){notice.value=e instanceof Error?e.message:"خطای Traffic API"}finally{loading.value=false}
+ }catch(e){notice.value=e instanceof Error?e.message:"خطای Traffic API"}
 }
 async function load(){loading.value=true;try{me.value=await auth.me();const[n,i,c,t,a,q]=await Promise.all([nodes.list(),inbounds.list(),clients.list(),traffic.summary(trafficDays.value),audit.list(),quotas.overview()]);nodeRows.value=n;inboundRows.value=i;clientRows.value=c;trafficData.value=t;quotaRows.value=q;if(me.value.role!=="tenant_operator")adminRows.value=await admins.list()}catch(e){if(localStorage.getItem("primevpn_access"))loginError.value=e instanceof Error?e.message:"خطای API"}finally{loading.value=false;booting.value=false}}
 async function login(){loginError.value="";loading.value=true;try{const r=await auth.login(email.value,password.value);if(r.mfa_required){mfaToken.value=r.mfa_token;modal.value="mfa";return}localStorage.setItem("primevpn_access",r.access_token);await load()}catch(e){loginError.value=e instanceof Error?e.message:"ورود ناموفق"}finally{loading.value=false}}
