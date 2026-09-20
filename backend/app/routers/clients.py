@@ -1,4 +1,4 @@
-from fastapi import APIRouter,Depends,HTTPException,Request
+from fastapi import APIRouter,Depends,HTTPException,Request\nfrom datetime import datetime,timezone
 from sqlalchemy.orm import Session
 from ..db import get_db
 from ..deps import current_admin
@@ -32,6 +32,6 @@ def revoke(client_id:str,request:Request,admin:Admin=Depends(current_admin),db:S
      material=json.loads(decrypt_secret(cred.encrypted_private_material));ov.crl_pem=revoke_certificate(ov.crl_pem,material["certificate"],decrypt_secret(ov.ca_key_encrypted),ov.ca_pem);deploy_openvpn_crl(node,inbound.interface,ov.crl_pem)
   except Exception as e:raise HTTPException(502,f"Node revocation failed: {e}")
  c.status=ResourceState.revoked
- if cred:cred.revoked_at=__import__("datetime").datetime.now(__import__("datetime").timezone.utc)
+ if cred:cred.revoked_at=datetime.now(timezone.utc)
  record(db,admin,request,"client.revoke","client",c.id);db.commit()
  return {"status":"revoked","client_id":c.id}
