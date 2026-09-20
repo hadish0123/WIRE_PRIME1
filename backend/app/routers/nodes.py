@@ -6,7 +6,7 @@ from ..deps import current_admin,require_tenant_manager
 from ..models import Admin,Node,NodeState,ProvisioningTask
 from ..schemas import NodeIn,NodeOut,AutoNodeIn\nfrom ..services.ssh_provisioner import install_node_agent,verify_agent,SSHProvisionError\nimport json
 from ..services.audit import record
-from ..security import new_bootstrap_token
+from ..security import new_bootstrap_token,create_agent_token
 from ..config import settings
 router=APIRouter()
 
