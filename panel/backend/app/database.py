@@ -34,7 +34,9 @@ async def ensure_tenant_schema() -> None:
     """Idempotently add tenant isolation columns to an existing PRIMEVPN database."""
     statements = [
         "ALTER TABLE admins ADD COLUMN IF NOT EXISTS tenant_owner_id VARCHAR",
-        "CREATE INDEX IF NOT EXISTS ix_admins_tenant_owner_id ON admins (tenant_owner_id)",
+        "ALTER TABLE admins ADD COLUMN IF NOT EXISTS user_quota INTEGER NOT NULL DEFAULT 0
+        ALTER TABLE admins ADD COLUMN IF NOT EXISTS traffic_quota_bytes BIGINT NOT NULL DEFAULT 0
+        CREATE INDEX IF NOT EXISTS ix_admins_tenant_owner_id ON admins (tenant_owner_id)",
         "ALTER TABLE nodes ADD COLUMN IF NOT EXISTS owner_admin_id VARCHAR",
         "CREATE INDEX IF NOT EXISTS ix_nodes_owner_admin_id ON nodes (owner_admin_id)",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS owner_admin_id VARCHAR",
