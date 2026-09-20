@@ -6,3 +6,5 @@ def test_wireguard_render():
  assert "[Interface]" in s and "AllowedIPs = 10.0.0.2/32" in s
 def test_openvpn_rejects_bad_transport():
  with pytest.raises(ValueError):render_openvpn("10.8.0.0/24",1194,"icmp")
+\n
+def test_amneziawg_parameters():\n from app.services.protocols import render_amneziawg_options\n s=render_amneziawg_options({"Jc":5,"Jmin":40,"Jmax":70,"S1":0,"S2":0,"S3":0,"S4":0,"H1":1,"H2":2,"H3":3,"H4":4})\n assert "Jc = 5" in s and "H4 = 4" in s\n
