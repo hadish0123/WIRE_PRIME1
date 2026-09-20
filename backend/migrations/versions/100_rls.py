@@ -3,7 +3,7 @@ revision="100_rls"
 down_revision="100_initial"
 branch_labels=None
 depends_on=None
-TENANT_TABLES=["nodes","inbounds","clients","client_credentials","devices","sessions","traffic_usage","quotas","config_artifacts","provisioning_tasks","jobs","node_peer_counters","audit_logs","roles"]
+TENANT_TABLES=["nodes","inbounds","clients","devices","sessions","traffic_usage","quotas","config_artifacts","provisioning_tasks","jobs","audit_logs","roles"]
 def upgrade():
  for t in TENANT_TABLES:
   op.execute(f"ALTER TABLE {t} ENABLE ROW LEVEL SECURITY")
