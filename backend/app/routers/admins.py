@@ -28,6 +28,17 @@ def permissions(admin:Admin=Depends(current_admin)):
  from ..deps import ROLE_PERMISSIONS
  return {"role":admin.role.value,"permissions":sorted(ROLE_PERMISSIONS.get(admin.role,set()))}
 
+@router.get("/my-inbounds")
+def my_inbounds(admin:Admin=Depends(current_admin),db:Session=Depends(get_db)):
+    if admin.role==RoleName.representative:
+        rows=(db.query(Inbound)
+              .join(AdminInboundScope,AdminInboundScope.inbound_id==Inbound.id)
+              .filter(AdminInboundScope.admin_id==admin.id,Inbound.tenant_id==admin.tenant_id)
+              .order_by(Inbound.name.asc()).all())
+    else:
+        rows=db.query(Inbound).filter(Inbound.tenant_id==admin.tenant_id).order_by(Inbound.name.asc()).all() if admin.tenant_id else db.query(Inbound).order_by(Inbound.name.asc()).all()
+    return [{"id":x.id,"name":x.name,"protocol":x.protocol.value,"node_id":x.node_id,"listen_port":x.listen_port,"enabled":x.enabled} for x in rows]
+
 @router.get("/inbounds")
 def available_inbounds(admin:Admin=Depends(require_permission("admins:manage")),db:Session=Depends(get_db)):
  if admin.role==RoleName.platform_owner:
