@@ -31,7 +31,7 @@ def create_client(data:ClientIn,request:Request,admin:Admin=Depends(require_tena
  c=Client(tenant_id=admin.tenant_id,**data.model_dump());db.add(c);db.flush();record(db,admin,request,"client.create","client",c.id);db.commit();db.refresh(c);return c
 
 @router.post("/{client_id}/revoke")
-def revoke(client_id:str,request:Request,admin:Admin=Depends(current_admin),db:Session=Depends(get_db)):
+def revoke(client_id:str,request:Request,admin:Admin=Depends(require_tenant_manager),db:Session=Depends(get_db)):
  c=db.query(Client).filter(Client.id==client_id,Client.tenant_id==admin.tenant_id).first()
  if not c:raise HTTPException(404,"Client not found")
  inbound=db.query(Inbound).filter(Inbound.id==c.inbound_id,Inbound.tenant_id==admin.tenant_id).first()
