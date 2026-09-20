@@ -2,7 +2,7 @@ from datetime import datetime
 from pydantic import BaseModel,Field,ConfigDict
 from .models import Protocol,NodeState,ResourceState,RoleName
 class LoginIn(BaseModel): email:str;password:str=Field(min_length=12,max_length=256)
-class TokenOut(BaseModel): access_token:str;token_type:str="bearer";expires_in:int
+class TokenOut(BaseModel): access_token:str;token_type:str="bearer";expires_in:int;mfa_required:bool=False;mfa_token:str|None=None
 class TenantIn(BaseModel): name:str=Field(min_length=2,max_length=160);slug:str=Field(pattern=r"^[a-z0-9][a-z0-9-]{1,98}[a-z0-9]$")
 class NodeIn(BaseModel): name:str=Field(min_length=2,max_length=160);address:str=Field(min_length=3,max_length=255)
 class InboundIn(BaseModel): node_id:str;name:str;protocol:Protocol;listen_port:int=Field(gt=0,lt=65536);interface:str;address:str;network:str;dns:str|None=None;mtu:int|None=Field(default=None,ge=576,le=9000)
