@@ -26,7 +26,7 @@ def _guard(auth: dict, permission: str) -> None:
 @router.get('')
 async def list_inbounds(auth: dict = Depends(require_auth), db=Depends(get_db)):
     _guard(auth, 'nodes.view')
-    nodes = (await db.execute(select(Node).where(owner_filter(Node.owner_admin_id)).order_by(Node.name, Node.id))).scalars().all()
+    nodes = (await db.execute(select(Node).where(node_filter()).order_by(Node.name, Node.id))).scalars().all()
     result = []
     for node in nodes:
         result.append({'id': f'wireguard:{node.id}', 'node_id': node.id, 'node_name': node.name, 'protocol': 'wireguard', 'name': 'WireGuard / AmneziaWG', 'endpoint': node.server_endpoint, 'port': node.listen_port or 51820, 'network': '10.8.0.0/24', 'enabled': bool(node.server_public_key)})
