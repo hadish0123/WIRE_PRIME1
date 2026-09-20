@@ -1,3 +1,4 @@
+import ipaddress
 import os
 import re
 import subprocess
@@ -51,40 +52,47 @@ def _validate_name(name: str) -> str:
 
 def _ensure_pki() -> None:
     BASE_DIR.mkdir(parents=True, exist_ok=True)
+    PKI_DIR.parent.mkdir(parents=True, exist_ok=True)
     CLIENTS_DIR.mkdir(parents=True, exist_ok=True)
     if (PKI_DIR / 'ca.crt').is_file() and (PKI_DIR / 'private' / 'server.key').is_file():
         return
+    env = {**os.environ, 'EASYRSA_PKI': str(PKI_DIR)}
     if not (PKI_DIR / 'index.txt').exists():
-        result = _run([EASYRSA, 'init-pki'], cwd=PKI_DIR.parent)
+        result = subprocess.run([EASYRSA, 'init-pki'], cwd=PKI_DIR.parent, env=env, capture_output=True, text=True, check=False)
         if result.returncode != 0:
             raise HTTPException(status_code=500, detail='Failed to initialize OpenVPN PKI')
     if not (PKI_DIR / 'ca.crt').is_file():
-        result = _run([EASYRSA, '--batch', 'build-ca', 'nopass'], cwd=PKI_DIR.parent)
+        result = subprocess.run([EASYRSA, '--batch', 'build-ca', 'nopass'], cwd=PKI_DIR.parent, env=env, capture_output=True, text=True, check=False)
         if result.returncode != 0:
             raise HTTPException(status_code=500, detail='Failed to create OpenVPN CA')
     if not (PKI_DIR / 'issued' / 'server.crt').is_file():
-        result = _run([EASYRSA, '--batch', 'build-server-full', 'server', 'nopass'], cwd=PKI_DIR.parent)
+        result = subprocess.run([EASYRSA, '--batch', 'build-server-full', 'server', 'nopass'], cwd=PKI_DIR.parent, env=env, capture_output=True, text=True, check=False)
         if result.returncode != 0:
             raise HTTPException(status_code=500, detail='Failed to create OpenVPN server certificate')
     if not (PKI_DIR / 'dh.pem').is_file():
-        result = _run([EASYRSA, gen := 'gen-dh'], cwd=PKI_DIR.parent)
+        result = subprocess.run([EASYRSA, 'gen-dh'], cwd=PKI_DIR.parent, env=env, capture_output=True, text=True, check=False)
+        gen = 'gen-dh'
         if result.returncode != 0:
             raise HTTPException(status_code=500, detail=f'Failed to generate OpenVPN DH parameters: {gen}')
     if not (PKI_DIR / 'crl.pem').is_file():
-        result = _run([EASYRSA, 'gen-crl'], cwd=PKI_DIR.parent)
+        result = subprocess.run([EASYRSA, 'gen-crl'], cwd=PKI_DIR.parent, env=env, capture_output=True, text=True, check=False)
         if result.returncode != 0:
             raise HTTPException(status_code=500, detail='Failed to generate OpenVPN CRL')
 
 
 def _write_server_config(cfg: ServerConfig) -> None:
-    network_ip, prefix = cfg.network.split('/', 1) if '/' in cfg.network else ('10.9.0.0', '24')
-    if prefix not in {'8', '16', '24'} or not network_ip.startswith('10.'):
-        raise HTTPException(status_code=400, detail='OpenVPN network must be a private 10.x /8, /16 or /24 network')
+    try:
+        network = ipaddress.ip_network(cfg.network, strict=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail='Invalid OpenVPN network') from exc
+    if network.version != 4 or not network.is_private:
+        raise HTTPException(status_code=400, detail='OpenVPN network must be a private IPv4 network')
     _ensure_pki()
     BASE_DIR.mkdir(parents=True, exist_ok=True)
+    netmask = str(network.netmask)
     SERVER_CONFIG.write_text(
         f'port {cfg.port}\nproto {cfg.protocol}\ndev tun\n'
-        f'server {network_ip} {prefix}\n'
+        f'server {network.network_address} {netmask}\n'
         'topology subnet\n'
         f'ca {PKI_DIR}/ca.crt\n'
         f'cert {PKI_DIR}/issued/server.crt\n'
@@ -94,6 +102,7 @@ def _write_server_config(cfg: ServerConfig) -> None:
         'keepalive 10 60\npersist-key\npersist-tun\n'
         'user nobody\ngroup nogroup\n'
         'client-to-client\n'
+        'tls-version-min 1.2\nauth SHA256\ncipher AES-256-GCM\ndata-ciphers AES-256-GCM:AES-128-GCM\n'
         f'status {BASE_DIR}/status.log 10\nverb 3\n'
     )
     (BASE_DIR / 'endpoint').write_text(cfg.endpoint)
@@ -124,7 +133,8 @@ def create_client(req: ClientRequest, _: Auth):
     client_dir = CLIENTS_DIR / name
     if client_dir.exists():
         raise HTTPException(status_code=409, detail='OpenVPN client already exists')
-    result = _run([EASYRSA, '--batch', 'build-client-full', name, 'nopass'], cwd=PKI_DIR.parent)
+    env = {**os.environ, 'EASYRSA_PKI': str(PKI_DIR)}
+    result = subprocess.run([EASYRSA, '--batch', 'build-client-full', name, 'nopass'], cwd=PKI_DIR.parent, env=env, capture_output=True, text=True, check=False)
     if result.returncode != 0:
         raise HTTPException(status_code=500, detail='Failed to create OpenVPN client certificate')
     client_dir.mkdir(parents=True)
@@ -134,7 +144,7 @@ def create_client(req: ClientRequest, _: Auth):
     key = (PKI_DIR / 'private' / f'{name}.key').read_text()
     config = (
         'client\ndev tun\nproto udp\nremote ' + endpoint + '\n'
-        'nobind\npersist-key\npersist-tun\nremote-cert-tls server\nverb 3\n'
+        'nobind\npersist-key\npersist-tun\nremote-cert-tls server\nauth SHA256\ncipher AES-256-GCM\ndata-ciphers AES-256-GCM:AES-128-GCM\nverb 3\n'
         '<ca>\n' + ca + '</ca>\n<cert>\n' + crt + '</cert>\n<key>\n' + key + '</key>\n'
     )
     (client_dir / 'client.ovpn').write_text(config)
@@ -158,10 +168,11 @@ def client_config(name: str, _: Auth):
 @router.delete('/clients/{name}')
 def revoke_client(name: str, _: Auth):
     name = _validate_name(name)
-    result = _run([EASYRSA, '--batch', 'revoke', name], cwd=PKI_DIR.parent)
+    env = {**os.environ, 'EASYRSA_PKI': str(PKI_DIR)}
+    result = subprocess.run([EASYRSA, '--batch', 'revoke', name], cwd=PKI_DIR.parent, env=env, capture_output=True, text=True, check=False)
     if result.returncode != 0:
         raise HTTPException(status_code=500, detail='Failed to revoke OpenVPN client')
-    _run([EASYRSA, 'gen-crl'], cwd=PKI_DIR.parent)
+    subprocess.run([EASYRSA, 'gen-crl'], cwd=PKI_DIR.parent, env=env, capture_output=True, text=True, check=False)
     client_dir = CLIENTS_DIR / name
     if client_dir.exists():
         import shutil
