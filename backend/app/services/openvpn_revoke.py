@@ -12,3 +12,8 @@ def revoke_certificate(existing_crl_pem,client_cert_pem,ca_key_pem,ca_cert_pem):
  revoked=x509.RevokedCertificateBuilder().serial_number(cert.serial_number).revocation_date(datetime.now(timezone.utc)).build()
  builder=builder.add_revoked_certificate(revoked)
  return builder.sign(private_key=ca_key,algorithm=hashes.SHA256()).public_bytes(serialization.Encoding.PEM).decode()
+
+def create_empty_crl(ca_pem,ca_key_pem):
+ ca=x509.load_pem_x509_certificate(ca_pem.encode());ca_key=serialization.load_pem_private_key(ca_key_pem.encode(),password=None)
+ crl=x509.CertificateRevocationListBuilder().issuer_name(ca.subject).last_update(datetime.now(timezone.utc)).next_update(datetime.now(timezone.utc)+timedelta(days=30)).sign(private_key=ca_key,algorithm=hashes.SHA256())
+ return crl.public_bytes(serialization.Encoding.PEM).decode()
