@@ -63,7 +63,7 @@
     </section>
 
     <Dialog v-model:visible="showWireGuardInfo" modal header="WireGuard" :style="{width:'min(32rem,94vw)'}">
-      <div class="info-box">WireGuard فعلی PRIMEVPN روی رابط Amnezia/WireGuard نود مدیریت می‌شود. برای چند اینباند مستقل WireGuard باید رابط‌های مستقل روی Agent ایجاد شوند؛ این بخش را در مرحله بعد به Agent متصل می‌کنیم و از مسیر ترافیک VPN عبور نمی‌دهیم.</div>
+      <div class="info-box">WireGuard / AmneziaWG این نود به‌عنوان اینباند WireGuard مدیریت می‌شود و ترافیک VPN مستقیماً از خود نود عبور می‌کند.</div>
     </Dialog>
   </section>
 </template>
