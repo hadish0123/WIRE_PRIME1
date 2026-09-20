@@ -15,17 +15,18 @@
     "menu": "Главная навигация"
   },
   "login": {
-    "kicker": "Управление доступом",
+    "kicker": "PRIMEVPN",
     "title": "VPN control desk",
-    "description": "Управление серверами, пользователями, конфигурациями и синхронизацией Remnawave из единой панели.",
-    "signalsNodes": "Серверы",
-    "signalsUsers": "Пользователи",
-    "signalsConfigs": "Конфигурации",
+    "description": "Защищённая панель управления WireGuard и OpenVPN для нескольких узлов.",
+    "signalsNodes": "НЕСКОЛЬКО УЗЛОВ",
+    "signalsUsers": "ПОЛЬЗОВАТЕЛИ",
+    "signalsConfigs": "КОНФИГИ",
     "brand": "AmneziaWG",
-    "subtitle": "Вход оператора",
+    "subtitle": "Панель управления",
     "password": "Пароль",
     "submit": "Войти",
-    "error": "Ошибка входа"
+    "error": "Ошибка входа",
+    "username": "Имя пользователя"
   },
   "users": {
     "kicker": "Управление доступом",
