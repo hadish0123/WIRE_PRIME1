@@ -1,10 +1,12 @@
 from fastapi import APIRouter,Depends,HTTPException,Request
-from ..services.audit import record
+from datetime import datetime,timezone,timedelta
 from sqlalchemy.orm import Session
 from ..db import get_db
 from ..deps import current_admin
-from ..models import Admin,Node,NodeState,ProvisioningTask\nfrom ..security import new_bootstrap_token
+from ..models import Admin,Node,NodeState,ProvisioningTask
 from ..schemas import NodeIn,NodeOut
+from ..services.audit import record
+from ..security import new_bootstrap_token
 router=APIRouter()
 @router.get("",response_model=list[NodeOut])
 def list_nodes(admin:Admin=Depends(current_admin),db:Session=Depends(get_db)):
@@ -21,8 +23,10 @@ def provision(node_id:str,request:Request,admin:Admin=Depends(current_admin),db:
  if not key:raise HTTPException(400,"Idempotency-Key required")
  old=db.query(ProvisioningTask).filter(ProvisioningTask.idempotency_key==key).first()
  if old:return {"task_id":old.id,"state":old.state}
- t=ProvisioningTask(tenant_id=admin.tenant_id,node_id=n.id,idempotency_key=key,state=NodeState.authenticating.value);n.state=NodeState.authenticating;db.add(t);record(db,admin,request,"node.provision","node",n.id,details={"task_id":t.id});db.commit()
- return {"task_id":t.id,"state":t.state}
+ raw,h=new_bootstrap_token()
+ t=ProvisioningTask(tenant_id=admin.tenant_id,node_id=n.id,idempotency_key=key,state=NodeState.authenticating.value,bootstrap_token_hash=h,bootstrap_expires_at=datetime.now(timezone.utc)+timedelta(minutes=15))
+ n.state=NodeState.authenticating;db.add(t);record(db,admin,request,"node.provision","node",n.id,details={"task_id":t.id});db.commit()
+ return {"task_id":t.id,"state":t.state,"bootstrap_token":raw,"expires_at":t.bootstrap_expires_at}
 @router.get("/{node_id}/health")
 def health(node_id:str,admin:Admin=Depends(current_admin),db:Session=Depends(get_db)):
  n=db.query(Node).filter(Node.id==node_id,Node.tenant_id==admin.tenant_id).first()
