@@ -30,7 +30,7 @@ from app.models import (
     UserSchema,
     UserWithPeers,
 )
-from app.routers.api_parts.common import DB, guard_not_remnawave_managed, owner_filter, tenant_owner_for_create
+from app.routers.api_parts.common import DB, guard_not_remnawave_managed, owner_filter, tenant_owner_for_create, node_filter
 from app.services.devices import (
     create_device,
     count_live_devices,
@@ -133,7 +133,7 @@ async def api_list_users(db: DB):
         .all()
     )
     # One node list for the whole page: per-device availability is derived from it in memory.
-    nodes = list((await db.execute(select(Node).where(owner_filter(Node.owner_admin_id)).order_by(Node.name, Node.id))).scalars().all())
+    nodes = list((await db.execute(select(Node).where(node_filter()).order_by(Node.name, Node.id))).scalars().all())
     local_traffic_rows = (
         (await db.execute(select(LocalAmneziawgUserLifetimeTraffic))).scalars().all()
     )
