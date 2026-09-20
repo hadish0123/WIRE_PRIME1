@@ -1,0 +1,27 @@
+[Unit]
+Description=PRIMEVPN Node Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/primevpn-agent
+EnvironmentFile=/etc/primevpn/agent.env
+ExecStart=/opt/primevpn-agent/.venv/bin/uvicorn app:app --host 0.0.0.0 --port 9100
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/etc/primevpn /etc/openvpn/server /run/primevpn
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target
