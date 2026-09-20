@@ -1,0 +1,18 @@
+from alembic import op
+import sqlalchemy as sa
+revision="108_commerce"
+down_revision="107_peer_counters_rls"
+branch_labels=None
+depends_on=None
+def upgrade():
+ insp=sa.inspect(op.get_bind())
+ if "products" not in insp.get_table_names():
+  op.create_table("products",sa.Column("id",sa.String(36),primary_key=True),sa.Column("tenant_id",sa.String(36),sa.ForeignKey("tenants.id",ondelete="CASCADE")),sa.Column("name",sa.String(160),nullable=False),sa.Column("description",sa.Text()),sa.Column("enabled",sa.Boolean(),nullable=False,server_default=sa.true()),sa.Column("created_at",sa.DateTime(timezone=True),nullable=False))
+  op.create_table("plans",sa.Column("id",sa.String(36),primary_key=True),sa.Column("product_id",sa.String(36),sa.ForeignKey("products.id",ondelete="CASCADE"),nullable=False),sa.Column("name",sa.String(160),nullable=False),sa.Column("price_minor",sa.BigInteger(),nullable=False),sa.Column("currency",sa.String(3),nullable=False),sa.Column("duration_days",sa.Integer(),nullable=False),sa.Column("traffic_bytes",sa.BigInteger()),sa.Column("enabled",sa.Boolean(),nullable=False,server_default=sa.true()))
+  op.create_table("orders",sa.Column("id",sa.String(36),primary_key=True),sa.Column("tenant_id",sa.String(36),sa.ForeignKey("tenants.id",ondelete="CASCADE"),nullable=False),sa.Column("admin_id",sa.String(36),sa.ForeignKey("admins.id",ondelete="SET NULL")),sa.Column("plan_id",sa.String(36),sa.ForeignKey("plans.id"),nullable=False),sa.Column("idempotency_key",sa.String(255),unique=True,nullable=False),sa.Column("status",sa.String(30),nullable=False),sa.Column("total_minor",sa.BigInteger(),nullable=False),sa.Column("currency",sa.String(3),nullable=False),sa.Column("created_at",sa.DateTime(timezone=True),nullable=False))
+  op.create_table("payments",sa.Column("id",sa.String(36),primary_key=True),sa.Column("order_id",sa.String(36),sa.ForeignKey("orders.id",ondelete="CASCADE"),nullable=False),sa.Column("provider",sa.String(80),nullable=False),sa.Column("provider_reference",sa.String(255),unique=True),sa.Column("status",sa.String(30),nullable=False),sa.Column("amount_minor",sa.BigInteger(),nullable=False),sa.Column("currency",sa.String(3),nullable=False),sa.Column("created_at",sa.DateTime(timezone=True),nullable=False))
+  op.create_table("subscriptions",sa.Column("id",sa.String(36),primary_key=True),sa.Column("tenant_id",sa.String(36),sa.ForeignKey("tenants.id",ondelete="CASCADE"),nullable=False),sa.Column("client_id",sa.String(36),sa.ForeignKey("clients.id",ondelete="CASCADE"),nullable=False),sa.Column("plan_id",sa.String(36),sa.ForeignKey("plans.id"),nullable=False),sa.Column("status",sa.String(30),nullable=False),sa.Column("starts_at",sa.DateTime(timezone=True),nullable=False),sa.Column("ends_at",sa.DateTime(timezone=True),nullable=False),sa.Column("traffic_bytes",sa.BigInteger()))
+  op.create_table("wallets",sa.Column("id",sa.String(36),primary_key=True),sa.Column("tenant_id",sa.String(36),sa.ForeignKey("tenants.id",ondelete="CASCADE"),unique=True,nullable=False),sa.Column("balance_minor",sa.BigInteger(),nullable=False,server_default="0"),sa.Column("currency",sa.String(3),nullable=False))
+  op.create_table("wallet_transactions",sa.Column("id",sa.String(36),primary_key=True),sa.Column("wallet_id",sa.String(36),sa.ForeignKey("wallets.id",ondelete="CASCADE"),nullable=False),sa.Column("amount_minor",sa.BigInteger(),nullable=False),sa.Column("kind",sa.String(40),nullable=False),sa.Column("reference",sa.String(255),unique=True),sa.Column("created_at",sa.DateTime(timezone=True),nullable=False))
+def downgrade():
+ for t in ["wallet_transactions","wallets","subscriptions","payments","orders","plans","products"]:op.drop_table(t)
