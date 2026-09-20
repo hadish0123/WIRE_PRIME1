@@ -1,6 +1,7 @@
 import os
 from collections.abc import AsyncGenerator
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
@@ -27,3 +28,20 @@ class Base(DeclarativeBase):
 async def get_db() -> AsyncGenerator[AsyncSession]:
     async with AsyncSessionLocal() as session:
         yield session
+
+
+async def ensure_tenant_schema() -> None:
+    """Idempotently add tenant isolation columns to an existing PRIMEVPN database."""
+    statements = [
+        "ALTER TABLE admins ADD COLUMN IF NOT EXISTS tenant_owner_id VARCHAR",
+        "CREATE INDEX IF NOT EXISTS ix_admins_tenant_owner_id ON admins (tenant_owner_id)",
+        "ALTER TABLE nodes ADD COLUMN IF NOT EXISTS owner_admin_id VARCHAR",
+        "CREATE INDEX IF NOT EXISTS ix_nodes_owner_admin_id ON nodes (owner_admin_id)",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS owner_admin_id VARCHAR",
+        "CREATE INDEX IF NOT EXISTS ix_users_owner_admin_id ON users (owner_admin_id)",
+        "ALTER TABLE openvpn_clients ADD COLUMN IF NOT EXISTS owner_admin_id VARCHAR",
+        "CREATE INDEX IF NOT EXISTS ix_openvpn_clients_owner_admin_id ON openvpn_clients (owner_admin_id)",
+    ]
+    async with engine.begin() as conn:
+        for statement in statements:
+            await conn.execute(text(statement))
