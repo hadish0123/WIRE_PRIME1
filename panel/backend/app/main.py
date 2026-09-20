@@ -12,8 +12,6 @@ logging.basicConfig(level=logging.INFO)
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    # One PostgreSQL LISTEN connection per process serves every open public event stream; stopping
-    # it releases the connection and ends every stream it still holds.
     hub = get_hub()
     await hub.start()
     try:
@@ -22,7 +20,7 @@ async def lifespan(_app: FastAPI):
         await hub.stop()
 
 
-app = FastAPI(title='AmneziaWG Panel', lifespan=lifespan)
+app = FastAPI(title='PRIMEVPN Control Plane', version='1.0.0')
 register_error_handlers(app)
 app.include_router(auth.router)
 app.include_router(api.webhook_router)
