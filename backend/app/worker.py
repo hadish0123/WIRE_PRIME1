@@ -106,11 +106,14 @@ def enforce_quotas(db):
             q.state="WARNING"
         else:
             q.state="NORMAL"
-        elif q.state in {"NORMAL","WARNING"} and c.status==ResourceState.suspended:
-            c.status=ResourceState.active
+            # A daily/monthly/device limit can clear when its window or device count changes.
+            # Restore only clients that were suspended by quota enforcement; never overwrite
+            # explicit REVOKED/EXPIRED states.
+            if c.status == ResourceState.suspended:
+                c.status = ResourceState.active
         if limited:
-            # Do not permanently revoke credentials for quota limits. Reconciliation removes
-            # suspended peers and restores them automatically when a daily/monthly window resets.
+            # Suspension is enforced by the next node reconciliation: suspended clients are
+            # omitted from the desired WireGuard/AmneziaWG peer set and OpenVPN policy.
             pass
     db.commit()
 
