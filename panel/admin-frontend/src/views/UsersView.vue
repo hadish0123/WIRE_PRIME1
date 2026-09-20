@@ -205,6 +205,12 @@
             <option v-for="u in users" :key="u.id" :value="u.id">{{ u.name }}</option>
           </select>
         </label>
+        <label>اینباند WireGuard
+          <select v-model="clientForm.node_id">
+            <option value="">انتخاب نود</option>
+            <option v-for="n in allNodes" :key="n.id" :value="n.id">{{ n.name }} · WireGuard/AmneziaWG</option>
+          </select>
+        </label>
         <label>نام کلاینت
           <InputText v-model="clientForm.name" placeholder="iphone-01" />
         </label>
@@ -248,7 +254,7 @@ const router = useRouter()
 const toast = useToast()
 const { t } = useI18n()
 
-const { users, loading, loadError, newName, addingUser, addUser, block, unblock, confirmDelete, load: loadUsers } =
+const { users, allNodes, loading, loadError, newName, addingUser, addUser, block, unblock, confirmDelete, load: loadUsers } =
   useUsers()
 
 const query = reactive<UserListQuery>({
@@ -265,7 +271,7 @@ const savingDeviceLimit = ref(false)
 const deviceLimitError = ref<string | null>(null)
 const showClientDialog = ref(false)
 const clientSaving = ref(false)
-const clientForm = reactive({ userId: '', name: '', traffic_gb: 0, days: 0 })
+const clientForm = reactive({ userId: '', node_id: '', name: '', traffic_gb: 0, days: 0 })
 
 const listResponse = computed(() => usersApi.queryLocalUsers(users.value, query))
 const visibleUsers = computed(() => listResponse.value.items)
@@ -330,16 +336,18 @@ function clearSelectedUser() {
 }
 
 async function createClient() {
-  if (!clientForm.userId || !clientForm.name.trim()) return
+  if (!clientForm.userId || !clientForm.node_id || !clientForm.name.trim()) return
   clientSaving.value = true
   try {
     await usersApi.createClient(clientForm.userId, {
       name: clientForm.name.trim(),
+      node_id: clientForm.node_id,
       traffic_gb: clientForm.traffic_gb,
       days: clientForm.days,
     })
     showClientDialog.value = false
     clientForm.name = ''
+    clientForm.node_id = ''
     clientForm.traffic_gb = 0
     clientForm.days = 0
     await loadUsers()
