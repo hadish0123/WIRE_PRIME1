@@ -43,35 +43,49 @@ def capabilities(x_agent_token:str|None=Header(default=None)):auth(x_agent_token
 def validate(data:ApplyConfig,x_agent_token:str|None=Header(default=None)):auth(x_agent_token,"write");return validate_config(data)
 @app.post("/apply")
 def apply(data:ApplyConfig,x_agent_token:str|None=Header(default=None)):
- auth(x_agent_token,"write");validate_config(data)
- base="/etc/primevpn";os.makedirs(base,mode=0o700,exist_ok=True);name=safe_interface(data.interface);path=f"{base}/{name}.conf";tmp=path+".new";backup=path+".bak"
- if os.path.exists(path):shutil.copy2(path,backup)
+ auth(x_agent_token,"write");safe_interface(data.interface)
+ base="/etc/primevpn";name=safe_interface(data.interface);path=f"{base}/{name}.conf";tmp=path+".new";backup=path+".bak"
+ previous_files={}
  try:
-  with open(tmp,"w",encoding="utf-8") as f:f.write(data.config)
-  os.chmod(tmp,0o600);os.replace(tmp,path)
+  os.makedirs(base,mode=0o700,exist_ok=True)
+  if os.path.exists(path):shutil.copy2(path,backup)
   for filename,body in data.files.items():
-   if not re.fullmatch(r"[A-Za-z0-9_.-]{1,100}",filename): raise HTTPException(400,"Invalid artifact filename")
-   artifact=f"{base}/{name}.{filename}"
+   if not re.fullmatch(r"[A-Za-z0-9_.-]{1,100}",filename):raise HTTPException(400,"Invalid artifact filename")
+   artifact=f"{base}/{name}.{filename}";previous_files[artifact]=open(artifact,"rb").read() if os.path.exists(artifact) else None
    atmp=artifact+".new"
    with open(atmp,"w",encoding="utf-8") as f:f.write(body)
    os.chmod(atmp,0o600);os.replace(atmp,artifact)
+  with open(tmp,"w",encoding="utf-8") as f:f.write(data.config)
+  os.chmod(tmp,0o600);os.replace(tmp,path)
+  validate_config(data)
   if data.protocol in {"wireguard","amneziawg"}:
    tool="wg-quick" if data.protocol=="wireguard" else "awg-quick"
    if not shutil.which(tool):raise RuntimeError(f"{tool} unavailable")
    subprocess.run([tool,"down",path],capture_output=True,text=True,timeout=20)
    subprocess.run([tool,"up",path],capture_output=True,text=True,timeout=20,check=True)
-  elif data.protocol=="openvpn" and shutil.which("systemctl"):
+  elif data.protocol=="openvpn":
+   if not shutil.which("systemctl"):raise RuntimeError("systemctl unavailable")
    server_dir="/etc/openvpn/server";os.makedirs(server_dir,mode=0o700,exist_ok=True)
-   server_conf=f"{server_dir}/{name}.conf"
-   shutil.copy2(path,server_conf);os.chmod(server_conf,0o600)
+   server_conf=f"{server_dir}/{name}.conf";shutil.copy2(path,server_conf);os.chmod(server_conf,0o600)
    p=subprocess.run(["systemctl","reload-or-restart",f"openvpn-server@{name}"],capture_output=True,text=True,timeout=30)
    if p.returncode:raise RuntimeError(p.stderr.strip() or "OpenVPN restart failed")
   return {"applied":True,"protocol":data.protocol,"interface":data.interface}
+ except HTTPException: raise
  except Exception as e:
   if os.path.exists(backup):shutil.copy2(backup,path)
+  else:
+   try:os.unlink(path)
+   except FileNotFoundError:pass
+  for artifact,old in previous_files.items():
+   if old is None:
+    try:os.unlink(artifact)
+    except FileNotFoundError:pass
+   else:
+    with open(artifact,"wb") as f:f.write(old)
   try:os.unlink(tmp)
   except FileNotFoundError:pass
   raise HTTPException(502,f"Apply failed and previous configuration was restored: {e}")
+
 @app.get("/counters/wireguard/{interface}")
 def counters(interface:str,x_agent_token:str|None=Header(default=None)):
  auth(x_agent_token,"read");safe_interface(interface)
