@@ -54,6 +54,18 @@ class ConfigArtifact(Base):
  __tablename__="config_artifacts";id:Mapped[str]=mapped_column(String(36),primary_key=True,default=uid);tenant_id:Mapped[str]=mapped_column(ForeignKey("tenants.id",ondelete="CASCADE"),index=True);client_id:Mapped[str]=mapped_column(ForeignKey("clients.id",ondelete="CASCADE"),index=True);protocol:Mapped[Protocol]=mapped_column(Enum(Protocol));fingerprint:Mapped[str]=mapped_column(String(255),unique=True);encrypted_payload:Mapped[str]=mapped_column(Text);expires_at:Mapped[datetime]=mapped_column(DateTime(timezone=True));downloaded_at:Mapped[datetime|None]=mapped_column(DateTime(timezone=True))
 class ProvisioningTask(Base):
  __tablename__="provisioning_tasks";id:Mapped[str]=mapped_column(String(36),primary_key=True,default=uid);tenant_id:Mapped[str]=mapped_column(ForeignKey("tenants.id",ondelete="CASCADE"),index=True);node_id:Mapped[str]=mapped_column(ForeignKey("nodes.id",ondelete="CASCADE"),index=True);idempotency_key:Mapped[str]=mapped_column(String(255),unique=True);state:Mapped[str]=mapped_column(String(40),default="DISCOVERED");error:Mapped[str|None]=mapped_column(Text);bootstrap_token_hash:Mapped[str|None]=mapped_column(String(128));bootstrap_expires_at:Mapped[datetime|None]=mapped_column(DateTime(timezone=True));created_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=now);updated_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=now,onupdate=now)
+class NodePeerCounter(Base):
+ __tablename__="node_peer_counters"
+ id:Mapped[str]=mapped_column(String(36),primary_key=True,default=uid)
+ tenant_id:Mapped[str]=mapped_column(ForeignKey("tenants.id",ondelete="CASCADE"),index=True)
+ node_id:Mapped[str]=mapped_column(ForeignKey("nodes.id",ondelete="CASCADE"),index=True)
+ inbound_id:Mapped[str]=mapped_column(ForeignKey("inbounds.id",ondelete="CASCADE"),index=True)
+ client_id:Mapped[str]=mapped_column(ForeignKey("clients.id",ondelete="CASCADE"),index=True)
+ public_identifier:Mapped[str]=mapped_column(String(255))
+ bytes_in:Mapped[int]=mapped_column(BigInteger,default=0)
+ bytes_out:Mapped[int]=mapped_column(BigInteger,default=0)
+ updated_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=now,onupdate=now)
+ __table_args__=(UniqueConstraint("node_id","inbound_id","public_identifier"),)
 class Job(Base):
  __tablename__="jobs";id:Mapped[str]=mapped_column(String(36),primary_key=True,default=uid);tenant_id:Mapped[str|None]=mapped_column(ForeignKey("tenants.id",ondelete="CASCADE"),index=True);kind:Mapped[str]=mapped_column(String(100));state:Mapped[str]=mapped_column(String(30),default="QUEUED");payload:Mapped[str]=mapped_column(Text,default="{}");attempts:Mapped[int]=mapped_column(Integer,default=0);run_after:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=now);created_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=now)
 class AuditLog(Base):
