@@ -5,7 +5,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 from ..db import get_db
 from ..deps import current_admin, require_tenant_manager, can_access_client, representative_can_use_inbound
-from ..models import Admin, Client, Device, Inbound, InboundOpenVPN, ClientCredential, ResourceState, Protocol, Node, TrafficUsage, TrafficSnapshot, Session as ClientSession, Quota
+from ..models import Admin, Client, Device, Inbound, RoleName, InboundOpenVPN, ClientCredential, ResourceState, Protocol, Node, TrafficUsage, TrafficSnapshot, Session as ClientSession, Quota
 from ..schemas import ClientIn, ClientOut, ClientDetailOut, ClientUpdateIn, DeviceOut
 from ..services.audit import record
 from ..services.agent_client import revoke_wireguard_peer, deploy_openvpn_crl
@@ -95,8 +95,8 @@ def create_client(data:ClientIn,request:Request,admin:Admin=Depends(require_tena
  expires=_normalize_expiry(data.expires_at)
  if expires and expires<=datetime.now(timezone.utc):raise HTTPException(422,"Client expiry must be in the future")
  _validate_address(inbound,data.assigned_address)
- if db.query(Client).filter(Client.inbound_id==inbound.id,Client.assigned_address==data.assigned_address,Client.tenant_id==admin.tenant_id).first():raise HTTPException(409,"Assigned address already in use")
- if db.query(Client).filter(Client.inbound_id==inbound.id,Client.name==data.name,Client.tenant_id==admin.tenant_id).first():raise HTTPException(409,"Client name already exists on this inbound")
+ if db.query(Client).filter(Client.inbound_id==inbound.id,Client.assigned_address==data.assigned_address,Client.tenant_id==inbound.tenant_id).first():raise HTTPException(409,"Assigned address already in use")
+ if db.query(Client).filter(Client.inbound_id==inbound.id,Client.name==data.name,Client.tenant_id==inbound.tenant_id).first():raise HTTPException(409,"Client name already exists on this inbound")
  c=Client(tenant_id=inbound.tenant_id,inbound_id=data.inbound_id,created_by_admin_id=admin.id,name=data.name,assigned_address=data.assigned_address,expires_at=expires)
  db.add(c);db.flush()
  if any(v is not None for v in (data.total_bytes,data.daily_bytes,data.monthly_bytes,data.max_devices)) or expires:
