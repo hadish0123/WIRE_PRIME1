@@ -39,7 +39,7 @@ async def _enqueue_provision_operation(db: DB, node: Node) -> AsyncOperation:
 @router.get('/nodes', response_model=list[NodeWithStatus])
 async def api_list_nodes(db: DB):
     threshold_seconds = await online_threshold_seconds(db)
-    nodes = (await db.execute(select(Node).where(owner_filter(Node.owner_admin_id)).options(selectinload(Node.peers)))).scalars().all()
+    nodes = (await db.execute(select(Node).where(node_filter()).options(selectinload(Node.peers)))).scalars().all()
     return [
         NodeWithStatus(
             **NodeSchema.model_validate(node).model_dump(),
