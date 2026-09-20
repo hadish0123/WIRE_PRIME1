@@ -103,7 +103,7 @@ async def create_client(data: ClientIn, auth: dict = Depends(require_auth), db: 
     existing = await db.scalar(select(OpenVPNClient).where(OpenVPNClient.node_id == node.id, OpenVPNClient.name == data.name))
     if existing:
         raise HTTPException(status_code=409, detail='OpenVPN client already exists')
-    response = await _request(node, 'POST', '/openvpn/clients', json={'name': data.name})
+    response = await _request(node, 'POST', '/openvpn/clients', json={'name': data.name, 'traffic_bytes': requested_limit, 'expire_at': user.expire_at.isoformat() if user.expire_at else None})
     client = OpenVPNClient(id=str(uuid.uuid4()), user_id=user.id, node_id=node.id, name=data.name, status='active', created_at=datetime.now(UTC), owner_admin_id=tenant_owner_for_create())
     db.add(client)
     await db.commit()
