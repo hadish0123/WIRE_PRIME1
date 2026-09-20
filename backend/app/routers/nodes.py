@@ -3,7 +3,7 @@ from ..services.audit import record
 from sqlalchemy.orm import Session
 from ..db import get_db
 from ..deps import current_admin
-from ..models import Admin,Node,NodeState,ProvisioningTask
+from ..models import Admin,Node,NodeState,ProvisioningTask\nfrom ..security import new_bootstrap_token
 from ..schemas import NodeIn,NodeOut
 router=APIRouter()
 @router.get("",response_model=list[NodeOut])
