@@ -152,7 +152,13 @@ def run_once():
             try: sync_node(db,node,agent_client);db.commit()
             except Exception as exc:
                 db.rollback();node=db.query(Node).filter(Node.id==node.id).first() if node else None
-                if node: node.state=NodeState.degraded;db.commit()
+                if node:
+                    node.state=NodeState.degraded
+                    task=db.query(__import__("app.models",fromlist=["ProvisioningTask"]).ProvisioningTask).filter(__import__("app.models",fromlist=["ProvisioningTask"]).ProvisioningTask.node_id==node.id).order_by(__import__("app.models",fromlist=["ProvisioningTask"]).ProvisioningTask.created_at.desc()).first()
+                    if task:
+                        task.state=NodeState.degraded.value
+                        task.error=str(exc)[:4000]
+                    db.commit()
                 log.warning("node reconciliation failed: %s",exc)
         process_jobs(db)
     finally:
