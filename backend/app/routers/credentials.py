@@ -12,8 +12,10 @@ router=APIRouter()
 
 def allocate_device_address(db,client):
  base=ipaddress.ip_interface(client.assigned_address)
+ devices=db.query(Device).filter(Device.client_id==client.id,Device.assigned_address.isnot(None)).all()
+ if not devices:return client.assigned_address
  used={client.assigned_address}
- for d in db.query(Device).filter(Device.client_id==client.id,Device.assigned_address.isnot(None)).all():used.add(d.assigned_address)
+ for d in devices:used.add(d.assigned_address)
  candidates=list(base.network.hosts())
  if not candidates:raise HTTPException(409,"No usable addresses remain for this client network")
  for addr in candidates:
