@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import{computed,onMounted,ref}from"vue";
-import{auth,nodes,inbounds,clients,traffic,audit,quotas,admins}from"./api";
+import{auth,nodes,inbounds,clients,traffic,audit,quotas,admins,configs}from"./api";
 const sections=[["dashboard","داشبورد"],["nodes","نودها"],["inbounds","این‌باندها"],["clients","کلاینت‌ها"],["traffic","ترافیک و سهمیه"],["admins","مدیران و RBAC"],["audit","گزارش حسابرسی"],["settings","تنظیمات"]];
 const artifact=ref<any>(null),section=ref("dashboard"),email=ref(""),password=ref(""),mfaToken=ref(""),mfaCode=ref(""),loginError=ref(""),loading=ref(false),booting=ref(true),me=ref<any>(null),modal=ref<string|null>(null),notice=ref("");
 const nodeRows=ref<any[]>([]),inboundRows=ref<any[]>([]),clientRows=ref<any[]>([]),adminRows=ref<any[]>([]),auditRows=ref<any[]>([]),trafficData=ref<any>({});
