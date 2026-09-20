@@ -21,3 +21,14 @@ def create_agent_token(node_id,tenant_id,scopes):
  if not settings.agent_signing_private_key:raise RuntimeError("Agent signing key is not configured")
  now=datetime.now(timezone.utc);exp=now+timedelta(minutes=settings.agent_access_minutes)
  return jwt.encode({"sub":node_id,"tenant_id":tenant_id,"type":"node_access","scopes":scopes,"iat":now,"exp":exp,"jti":secrets.token_hex(16),"iss":"primevpn-control","aud":"primevpn-agent"},settings.agent_signing_private_key,algorithm="EdDSA")
+
+import pyotp
+from cryptography.fernet import Fernet
+def _fernet():
+ if not settings.data_encryption_key:raise RuntimeError("Data encryption key is not configured")
+ return Fernet(settings.data_encryption_key.encode())
+def encrypt_secret(value):return _fernet().encrypt(value.encode()).decode()
+def decrypt_secret(value):return _fernet().decrypt(value.encode()).decode()
+def new_totp_secret():return pyotp.random_base32()
+def totp_uri(secret,email):return pyotp.TOTP(secret).provisioning_uri(name=email,issuer_name="PRIMEVPN")
+def verify_totp(secret,code):return pyotp.TOTP(secret).verify(code,valid_window=1)
