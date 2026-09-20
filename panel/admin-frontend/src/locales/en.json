@@ -15,17 +15,18 @@
     "menu": "Main navigation"
   },
   "login": {
-    "kicker": "Access management",
+    "kicker": "PRIMEVPN",
     "title": "VPN control desk",
-    "description": "Manage servers, users, configurations, and Remnawave sync from a single panel.",
-    "signalsNodes": "Servers",
-    "signalsUsers": "Users",
-    "signalsConfigs": "Configurations",
+    "description": "Secure multi-node WireGuard and OpenVPN control plane.",
+    "signalsNodes": "MULTI-NODE",
+    "signalsUsers": "USERS",
+    "signalsConfigs": "CONFIGS",
     "brand": "AmneziaWG",
-    "subtitle": "Operator login",
+    "subtitle": "Control Desk",
     "password": "Password",
-    "submit": "Log in",
-    "error": "Login failed"
+    "submit": "Sign in",
+    "error": "Login failed",
+    "username": "Username"
   },
   "users": {
     "kicker": "Access management",
