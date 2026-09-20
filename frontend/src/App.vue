@@ -75,7 +75,19 @@ async function loadTrafficView(){
   quotaRows.value=await quotas.overview();
  }catch(e){notice.value=e instanceof Error?e.message:"خطای Traffic API"}
 }
-async function load(){loading.value=true;try{me.value=await auth.me();const[n,i,c,t,a,q]=await Promise.all([nodes.list(),inbounds.list(),clients.list(),traffic.summary(trafficDays.value),audit.list(),quotas.overview()]);nodeRows.value=n;inboundRows.value=i;clientRows.value=c;trafficData.value=t;quotaRows.value=q;if(me.value.role!=="tenant_operator")adminRows.value=await admins.list()}catch(e){if(localStorage.getItem("primevpn_access"))loginError.value=e instanceof Error?e.message:"خطای API"}finally{loading.value=false;booting.value=false}}
+async function load(){loading.value=true;try{
+ me.value=await auth.me();
+ const isRep=me.value.role==="representative";
+ const[n,i,c,t,auditData,q]=await Promise.all([
+  nodes.list(),inbounds.list(),clients.list(),
+  isRep?Promise.resolve({total_bytes:0,today_bytes:0,month_bytes:0}):traffic.summary(trafficDays.value),
+  isRep?Promise.resolve([]):audit.list(),
+  isRep?Promise.resolve([]):quotas.overview()
+ ]);
+ nodeRows.value=n;inboundRows.value=i;clientRows.value=c;trafficData.value=t;quotaRows.value=q;auditRows.value=auditData;
+ if(me.value.role!=="tenant_operator"&&me.value.role!=="representative"){adminRows.value=await admins.list();adminInboundRows.value=await admins.inbounds()}
+ if(isRep){adminInboundRows.value=await admins.myInbounds();section.value="clients"}
+}catch(e){if(localStorage.getItem("primevpn_access"))loginError.value=e instanceof Error?e.message:"خطای API"}finally{loading.value=false;booting.value=false}}
 async function login(){loginError.value="";loading.value=true;try{const r=await auth.login(email.value,password.value);if(r.mfa_required){mfaToken.value=r.mfa_token;modal.value="mfa";return}localStorage.setItem("primevpn_access",r.access_token);await load()}catch(e){loginError.value=e instanceof Error?e.message:"ورود ناموفق"}finally{loading.value=false}}
 async function verifyMfa(){try{const r=await auth.mfaVerify(mfaToken.value,mfaCode.value);localStorage.setItem("primevpn_access",r.access_token);modal.value=null;await load()}catch(e){loginError.value=e instanceof Error?e.message:"کد MFA نامعتبر"}}
 async function act(fn:()=>Promise<any>,success="انجام شد"){try{await fn();notice.value=success;modal.value=null;await load()}catch(e){notice.value=e instanceof Error?e.message:"خطا"}}
