@@ -216,7 +216,7 @@ def create_client(req: ClientRequest, _: Auth):
     client_dir.mkdir(parents=True)
     meta = json.loads((BASE_DIR / 'server_meta.json').read_text()) if (BASE_DIR / 'server_meta.json').is_file() else {'protocol':'udp','endpoint':'REPLACE_WITH_NODE_HOST:1194'}
     endpoint = str(meta.get('endpoint') or 'REPLACE_WITH_NODE_HOST:1194')
-    proto = str(meta.get('protocol') or 'udp')
+    proto = 'tcp-client' if meta.get('protocol') == 'tcp-server' else str(meta.get('protocol') or 'udp')
     ca = (PKI_DIR / 'ca.crt').read_text()
     crt = (PKI_DIR / 'issued' / f'{name}.crt').read_text()
     key = (PKI_DIR / 'private' / f'{name}.key').read_text()
