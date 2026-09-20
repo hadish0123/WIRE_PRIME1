@@ -53,6 +53,8 @@ class Admin(Base):
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Tenant root. Super-admin owns the platform; managers own isolated tenants.
     tenant_owner_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    user_quota: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    traffic_quota_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
 
 
 class Node(Base):
