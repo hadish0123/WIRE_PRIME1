@@ -1,6 +1,6 @@
 import os
 from .db import SessionLocal,set_platform_context
-from .models import Admin,RoleName,Tenant
+from .models import Admin,RoleName
 from .security import hash_password
 def main():
  email=os.environ.get("PRIMEVPN_BOOTSTRAP_EMAIL","").strip().lower()
@@ -13,12 +13,6 @@ def main():
   if existing:
    print("bootstrap admin already exists")
    return
-  tenant_id=os.environ.get("PRIMEVPN_BOOTSTRAP_TENANT_ID")
-  if tenant_id:
-   tenant=db.query(Tenant).filter(Tenant.id==tenant_id).first()
-   if not tenant:raise SystemExit("PRIMEVPN_BOOTSTRAP_TENANT_ID not found")
-  else:
-   tenant=Tenant(name="PRIMEVPN Platform",slug="platform");db.add(tenant);db.flush()
   admin=Admin(tenant_id=None,email=email,password_hash=hash_password(password),role=RoleName.platform_owner,enabled=True)
   db.add(admin);db.commit();print("platform owner created")
  finally:db.close()
