@@ -10,6 +10,7 @@ class ApplyConfig(BaseModel):
  protocol:str
  interface:str=Field(min_length=1,max_length=80)
  config:str=Field(min_length=1,max_length=200000)
+ files:dict[str,str]=Field(default_factory=dict)
 def safe_interface(v):
  if not re.fullmatch(r"[A-Za-z0-9_.-]{1,80}",v):raise HTTPException(400,"Invalid interface")
  return v
@@ -33,7 +34,9 @@ def validate_config(data):
    except FileNotFoundError:pass
  return {"valid":True,"protocol":data.protocol,"interface":data.interface}
 @app.get("/health")
-def health(x_agent_token:str|None=Header(default=None)):auth(x_agent_token,"read");return {"status":"READY","version":VERSION,"capabilities":caps(),"time":datetime.now(timezone.utc).isoformat()}
+def health(x_agent_token:str|None=Header(default=None)):
+ auth(x_agent_token,"read")
+ return {"status":"READY","version":VERSION,"capabilities":caps(),"time":datetime.now(timezone.utc).isoformat()}
 @app.get("/capabilities")
 def capabilities(x_agent_token:str|None=Header(default=None)):auth(x_agent_token,"read");return caps()
 @app.post("/validate")
@@ -41,18 +44,27 @@ def validate(data:ApplyConfig,x_agent_token:str|None=Header(default=None)):auth(
 @app.post("/apply")
 def apply(data:ApplyConfig,x_agent_token:str|None=Header(default=None)):
  auth(x_agent_token,"write");validate_config(data)
- base="/etc/primevpn";os.makedirs(base,mode=0o700,exist_ok=True);path=f"{base}/{safe_interface(data.interface)}.conf";tmp=path+".new";backup=path+".bak"
+ base="/etc/primevpn";os.makedirs(base,mode=0o700,exist_ok=True);name=safe_interface(data.interface);path=f"{base}/{name}.conf";tmp=path+".new";backup=path+".bak"
  if os.path.exists(path):shutil.copy2(path,backup)
  try:
   with open(tmp,"w",encoding="utf-8") as f:f.write(data.config)
   os.chmod(tmp,0o600);os.replace(tmp,path)
+  for filename,body in data.files.items():
+   if not re.fullmatch(r"[A-Za-z0-9_.-]{1,100}",filename): raise HTTPException(400,"Invalid artifact filename")
+   artifact=f"{base}/{name}.{filename}"
+   atmp=artifact+".new"
+   with open(atmp,"w",encoding="utf-8") as f:f.write(body)
+   os.chmod(atmp,0o600);os.replace(atmp,artifact)
   if data.protocol in {"wireguard","amneziawg"}:
    tool="wg-quick" if data.protocol=="wireguard" else "awg-quick"
    if not shutil.which(tool):raise RuntimeError(f"{tool} unavailable")
    subprocess.run([tool,"down",path],capture_output=True,text=True,timeout=20)
    subprocess.run([tool,"up",path],capture_output=True,text=True,timeout=20,check=True)
-  elif shutil.which("systemctl"):
-   p=subprocess.run(["systemctl","reload-or-restart",f"openvpn-server@{data.interface}"],capture_output=True,text=True,timeout=30)
+  elif data.protocol=="openvpn" and shutil.which("systemctl"):
+   server_dir="/etc/openvpn/server";os.makedirs(server_dir,mode=0o700,exist_ok=True)
+   server_conf=f"{server_dir}/{name}.conf"
+   shutil.copy2(path,server_conf);os.chmod(server_conf,0o600)
+   p=subprocess.run(["systemctl","reload-or-restart",f"openvpn-server@{name}"],capture_output=True,text=True,timeout=30)
    if p.returncode:raise RuntimeError(p.stderr.strip() or "OpenVPN restart failed")
   return {"applied":True,"protocol":data.protocol,"interface":data.interface}
  except Exception as e:
