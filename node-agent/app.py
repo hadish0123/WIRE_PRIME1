@@ -89,3 +89,14 @@ def parse_openvpn_status(path):
 def openvpn_counters(instance:str,x_agent_token:str|None=Header(default=None)):
  auth(x_agent_token,"read");safe_interface(instance)
  return {"instance":instance,"clients":parse_openvpn_status(f"/run/primevpn/{instance}.status")}
+
+class RevokePeer(BaseModel):
+ interface:str=Field(min_length=1,max_length=80)
+ public_key:str=Field(min_length=43,max_length=44)
+@app.post("/peers/revoke")
+def revoke_peer(data:RevokePeer,x_agent_token:str|None=Header(default=None)):
+ auth(x_agent_token,"write");safe_interface(data.interface)
+ if not shutil.which("wg"):raise HTTPException(503,"WireGuard unavailable")
+ p=subprocess.run(["wg","set",data.interface,"peer",data.public_key,"remove"],capture_output=True,text=True,timeout=15)
+ if p.returncode:raise HTTPException(502,p.stderr.strip() or "Peer revoke failed")
+ return {"revoked":True,"interface":data.interface,"public_key":data.public_key}
