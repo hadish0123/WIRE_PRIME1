@@ -25,6 +25,10 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(title='PRIMEVPN Control Plane', version='1.0.0', lifespan=lifespan)
 register_error_handlers(app)
+@app.get('/health')
+def health():
+    return {'status': 'ok'}
+
 app.include_router(auth.router)
 app.include_router(admins.router)
 app.include_router(openvpn.router)
