@@ -1,11 +1,30 @@
-name: CI
-on:
-  push:
-    branches: ["**"]
-  pull_request:
+name: PRIMEVPN CI
+on: {push: {branches: ["**"]}, pull_request: {}}
 jobs:
-  structure:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: test -f README.md && test -f backend/app/main.py && test -f frontend/src/App.vue && test -f node-agent/README.md
+ backend:
+  runs-on: ubuntu-latest
+  defaults: {run: {working-directory: backend}}
+  steps:
+   - uses: actions/checkout@v4
+   - uses: actions/setup-python@v5
+     with: {python-version: "3.12"}
+   - run: pip install -e ".[test]"
+   - run: pytest
+ frontend:
+  runs-on: ubuntu-latest
+  defaults: {run: {working-directory: frontend}}
+  steps:
+   - uses: actions/checkout@v4
+   - uses: actions/setup-node@v4
+     with: {node-version: "22"}
+   - run: npm install
+   - run: npm run build
+ node_agent:
+  runs-on: ubuntu-latest
+  defaults: {run: {working-directory: node-agent}}
+  steps:
+   - uses: actions/checkout@v4
+   - uses: actions/setup-python@v5
+     with: {python-version: "3.12"}
+   - run: pip install .
+   - run: python -m py_compile app.py

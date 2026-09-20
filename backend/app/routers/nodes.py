@@ -1,0 +1,29 @@
+from fastapi import APIRouter,Depends,HTTPException,Request
+from sqlalchemy.orm import Session
+from ..db import get_db
+from ..deps import current_admin
+from ..models import Admin,Node,NodeState,ProvisioningTask
+from ..schemas import NodeIn,NodeOut
+router=APIRouter()
+@router.get("",response_model=list[NodeOut])
+def list_nodes(admin:Admin=Depends(current_admin),db:Session=Depends(get_db)):
+ return db.query(Node).filter(Node.tenant_id==admin.tenant_id).order_by(Node.created_at.desc()).all()
+@router.post("",response_model=NodeOut)
+def create_node(data:NodeIn,admin:Admin=Depends(current_admin),db:Session=Depends(get_db)):
+ if not admin.tenant_id:raise HTTPException(400,"Tenant required")
+ n=Node(tenant_id=admin.tenant_id,name=data.name,address=data.address);db.add(n);db.commit();db.refresh(n);return n
+@router.post("/{node_id}/provision")
+def provision(node_id:str,request:Request,admin:Admin=Depends(current_admin),db:Session=Depends(get_db)):
+ n=db.query(Node).filter(Node.id==node_id,Node.tenant_id==admin.tenant_id).first()
+ if not n:raise HTTPException(404,"Node not found")
+ key=request.headers.get("Idempotency-Key")
+ if not key:raise HTTPException(400,"Idempotency-Key required")
+ old=db.query(ProvisioningTask).filter(ProvisioningTask.idempotency_key==key).first()
+ if old:return {"task_id":old.id,"state":old.state}
+ t=ProvisioningTask(tenant_id=admin.tenant_id,node_id=n.id,idempotency_key=key,state=NodeState.authenticating.value);n.state=NodeState.authenticating;db.add(t);db.commit()
+ return {"task_id":t.id,"state":t.state}
+@router.get("/{node_id}/health")
+def health(node_id:str,admin:Admin=Depends(current_admin),db:Session=Depends(get_db)):
+ n=db.query(Node).filter(Node.id==node_id,Node.tenant_id==admin.tenant_id).first()
+ if not n:raise HTTPException(404,"Node not found")
+ return {"node_id":n.id,"state":n.state,"last_seen_at":n.last_seen_at}

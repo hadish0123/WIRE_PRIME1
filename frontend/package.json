@@ -1,1 +1,1 @@
-{"name":"primevpn-frontend","private":true,"version":"100.0.0","type":"module","scripts":{"dev":"vite","build":"vite build"},"dependencies":{"vite":"latest","vue":"latest","typescript":"latest","primevue":"latest","tailwindcss":"latest"}}
+{"name":"primevpn-web","private":true,"version":"100.0.0","type":"module","scripts":{"dev":"vite","build":"vite build","typecheck":"vue-tsc --noEmit"},"dependencies":{"@vitejs/plugin-vue":"latest","vite":"latest","vue":"latest","typescript":"latest","vue-tsc":"latest"}}
