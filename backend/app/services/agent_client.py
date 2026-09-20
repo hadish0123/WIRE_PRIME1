@@ -9,3 +9,6 @@ def call(node,method,path,payload=None):
   r=c.request(method,_url(node,path),json=payload,headers=headers);r.raise_for_status();return r.json()
 def revoke_wireguard_peer(node,interface,public_key):
  return call(node,"POST","peers/revoke",{"interface":interface,"public_key":public_key})
+
+def deploy_openvpn_crl(node,instance,crl_pem):
+ return call(node,"POST","openvpn/crl",{"instance":instance,"crl_pem":crl_pem})
