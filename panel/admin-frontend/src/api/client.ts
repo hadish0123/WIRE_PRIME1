@@ -8,23 +8,17 @@ export function authHeaders(extra: Record<string, string> = {}): Record<string, 
 
 function handleUnauthorized(): void {
   localStorage.removeItem('token')
+  localStorage.removeItem('username')
   window.location.href = '/login'
 }
 
 export async function req<T>(method: string, path: string, body?: unknown): Promise<T | null> {
   const headers = authHeaders(body ? { 'Content-Type': 'application/json' } : {})
-
-  const res = await fetch(`/api${path}`, {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : undefined,
-  })
-
+  const res = await fetch(`/api${path}`, { method, headers, body: body ? JSON.stringify(body) : undefined })
   if (res.status === 401) {
     handleUnauthorized()
     return null
   }
-
   if (!res.ok) {
     const text = await res.text().catch(() => `HTTP ${res.status}`)
     throw new Error(text)
@@ -46,11 +40,11 @@ export async function reqBlob(path: string): Promise<Blob | null> {
   return res.blob()
 }
 
-export async function login(password: string): Promise<LoginResponse> {
+export async function login(username: string, password: string): Promise<LoginResponse> {
   const res = await fetch('/api/auth/login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ password }),
+    body: JSON.stringify({ username, password }),
   })
   const data = (await res.json()) as LoginResponse & { detail?: string }
   if (!res.ok) throw new Error(data.detail || i18n.global.t('login.error'))
