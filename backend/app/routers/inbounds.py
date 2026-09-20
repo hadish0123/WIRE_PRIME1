@@ -19,7 +19,7 @@ def create_inbound(data:InboundIn,request:Request,admin:Admin=Depends(current_ad
  if data.protocol in {Protocol.wireguard,Protocol.amneziawg}:
   private,public=wg_keypair();db.add(InboundWireGuard(inbound_id=item.id,server_public_key=public,server_private_key_encrypted=encrypt_secret(private),amnezia_junk=5 if data.protocol==Protocol.amneziawg else None,amnezia_init=10 if data.protocol==Protocol.amneziawg else None,amnezia_response=5 if data.protocol==Protocol.amneziawg else None,amnezia_cookie=5 if data.protocol==Protocol.amneziawg else None))
  else:
-  ca,ca_key=openvpn_ca();server_cert,server_key=openvpn_server(ca,ca_key,"PRIMEVPN Server");db.add(InboundOpenVPN(inbound_id=item.id,transport="udp",server_network=data.network,tls_min="1.2",tls_crypt=True,ca_pem=ca,server_cert_pem=server_cert,server_key_encrypted=encrypt_secret(server_key),ca_key_encrypted=encrypt_secret(ca_key)))
+  ca,ca_key=openvpn_ca();server_cert,server_key=openvpn_server(ca,ca_key,"PRIMEVPN Server");db.add(InboundOpenVPN(inbound_id=item.id,transport="udp",server_network=data.network,tls_min="1.2",tls_crypt=True,ca_pem=ca,server_cert_pem=server_cert,server_key_encrypted=encrypt_secret(server_key),ca_key_encrypted=encrypt_secret(ca_key),tls_crypt_key_encrypted=encrypt_secret(openvpn_tls_crypt_key())))
  record(db,admin,request,"inbound.create","inbound",item.id);db.commit();db.refresh(item);return item
 @router.patch("/{inbound_id}",response_model=InboundOut)
 def update_inbound(inbound_id:str,data:InboundIn,request:Request,admin:Admin=Depends(current_admin),db:Session=Depends(get_db)):
