@@ -6,7 +6,7 @@ from sqlalchemy import select, text
 
 from .database import AsyncSessionLocal, ensure_tenant_schema
 from .error_handlers import register_error_handlers
-from .routers import admins, api, openvpn, auth, internal_worker, remnawave, telegram_proxy, user_events, user_page
+from .routers import admins, api, openvpn, inbounds, auth, internal_worker, remnawave, telegram_proxy, user_events, user_page
 from .services.events import get_hub
 
 logging.basicConfig(level=logging.INFO)
@@ -42,6 +42,7 @@ def health():
 app.include_router(auth.router)
 app.include_router(admins.router)
 app.include_router(openvpn.router)
+app.include_router(inbounds.router)
 app.include_router(api.webhook_router)
 app.include_router(api.router)
 app.include_router(internal_worker.router)
