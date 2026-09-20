@@ -1,10 +1,13 @@
 from fastapi import APIRouter,Depends,HTTPException,Request
-from datetime import datetime,timezone,timedelta\nimport ipaddress
+from datetime import datetime,timezone,timedelta
+import ipaddress
 from sqlalchemy.orm import Session
 from ..db import get_db
 from ..deps import current_admin,require_tenant_manager
 from ..models import Admin,Node,NodeState,ProvisioningTask
-from ..schemas import NodeIn,NodeOut,AutoNodeIn\nfrom ..services.ssh_provisioner import install_node_agent,verify_agent,SSHProvisionError\nimport json
+from ..schemas import NodeIn,NodeOut,AutoNodeIn
+from ..services.ssh_provisioner import install_node_agent,verify_agent,SSHProvisionError
+import json
 from ..services.audit import record
 from ..security import new_bootstrap_token,create_agent_token
 from ..config import settings
