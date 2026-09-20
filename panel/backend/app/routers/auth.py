@@ -97,8 +97,9 @@ async def bootstrap_admin(db: AsyncSession) -> None:
     admin = await db.scalar(select(Admin).where(Admin.username == BOOTSTRAP_USERNAME))
     if admin is None:
         admin = Admin(username=BOOTSTRAP_USERNAME, password_hash=hash_password(BOOTSTRAP_PASSWORD), role='super_admin', permissions_json='[]', node_ids_json='[]')
-        admin.tenant_owner_id = admin.id
         db.add(admin)
+        await db.flush()
+        admin.tenant_owner_id = admin.id
         await db.commit()
         log.info('Created PRIMEVPN bootstrap super admin %s', BOOTSTRAP_USERNAME)
 
