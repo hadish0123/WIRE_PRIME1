@@ -69,13 +69,14 @@ import { req } from '../api/client'
 
 type Item={id:string;name:string}
 const toast=useToast()
-const nodes=ref<Item[]>([]), users=ref<Item[]>([]), clients=ref<OpenVPNClient[]>([]), saving=ref(false), showWireGuardInfo=ref(false)
+type NodeItem=Item&{server_endpoint?:string|null;url?:string}
+const nodes=ref<NodeItem[]>([]), users=ref<Item[]>([]), clients=ref<OpenVPNClient[]>([]), saving=ref(false), showWireGuardInfo=ref(false)
 const server=reactive({node_id:'',endpoint:'',port:1194,protocol:'udp' as 'udp'|'tcp-server',network:'10.9.0.0/24'})
 const client=reactive({user_id:'',node_id:'',name:'',traffic_gb:0,days:0})
 const nodeName=(id:string)=>nodes.value.find(n=>n.id===id)?.name||id
 
 async function load(){
-  nodes.value=(await req<Item[]>('GET','/nodes'))||[]
+  nodes.value=(await req<NodeItem[]>('GET','/nodes'))||[]
   users.value=((await req<any[]>('GET','/users'))||[]).map(u=>({id:u.id,name:u.name}))
   clients.value=(await openvpnApi.list())||[]
   if(!server.node_id&&nodes.value[0]) server.node_id=nodes.value[0].id
