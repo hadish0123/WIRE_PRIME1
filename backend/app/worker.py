@@ -38,9 +38,11 @@ def collect_traffic(db):
                         if not previous: previous=NodePeerCounter(tenant_id=client.tenant_id,node_id=node.id,inbound_id=inbound.id,client_id=client.id,public_identifier=identifier)
                         previous.bytes_in=cur_in;previous.bytes_out=cur_out;db.add(previous)
                 else:
+                    seen_clients=set()
                     for peer in data.get("clients",[]):
                         client=db.query(Client).filter(Client.name==peer["common_name"],Client.tenant_id==node.tenant_id,Client.inbound_id==inbound.id).first()
                         if not client: continue
+                        seen_clients.add(client.id)
                         identifier=peer["common_name"];cur_in=int(peer["bytes_received"]);cur_out=int(peer["bytes_sent"])
                         previous=db.query(NodePeerCounter).filter_by(node_id=node.id,inbound_id=inbound.id,public_identifier=identifier).first()
                         old_in=previous.bytes_in if previous else 0;old_out=previous.bytes_out if previous else 0
@@ -51,6 +53,9 @@ def collect_traffic(db):
                         if di or do: db.add(TrafficUsage(tenant_id=client.tenant_id,client_id=client.id,node_id=node.id,inbound_id=inbound.id,bytes_in=di,bytes_out=do))
                         if not previous: previous=NodePeerCounter(tenant_id=client.tenant_id,node_id=node.id,inbound_id=inbound.id,client_id=client.id,public_identifier=identifier)
                         previous.bytes_in=cur_in;previous.bytes_out=cur_out;db.add(previous)
+                    stale=db.query(Session).filter(Session.node_id==node.id,Session.inbound_id==inbound.id,Session.ended_at.is_(None)).all()
+                    for sess in stale:
+                        if sess.client_id not in seen_clients:sess.ended_at=datetime.now(timezone.utc)
             except Exception as exc:
                 node.state=NodeState.degraded
                 log.warning("traffic collection failed node=%s inbound=%s: %s",node.id,inbound.id,exc)
