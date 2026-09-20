@@ -5,7 +5,7 @@ from ..deps import current_admin
 from ..models import Admin,Inbound,Node,InboundWireGuard,InboundOpenVPN,Protocol
 from ..schemas import InboundIn,InboundOut
 from ..services.audit import record
-from ..services.credentials import wg_keypair,openvpn_ca,openvpn_server
+from ..services.credentials import wg_keypair,openvpn_ca,openvpn_server,openvpn_tls_crypt_key
 from ..security import encrypt_secret
 router=APIRouter()
 @router.get("",response_model=list[InboundOut])
