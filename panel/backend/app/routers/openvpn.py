@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models import Node, OpenVPNClient, User
 from app.routers.auth import has_permission, require_auth
+from app.routers.api_parts.common import get_scoped_node, get_scoped_user, owner_filter, tenant_owner_for_create
 
 router = APIRouter(prefix='/api/openvpn', dependencies=[Depends(require_auth)])
 NAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.-]{0,31}$')
@@ -62,9 +63,7 @@ async def configure_server(data: ServerIn, auth: dict = Depends(require_auth), d
         raise HTTPException(status_code=400, detail='Invalid OpenVPN network') from exc
     if not network.is_private or network.version != 4:
         raise HTTPException(status_code=400, detail='OpenVPN network must be a private IPv4 network')
-    node = await db.get(Node, data.node_id)
-    if not node:
-        raise HTTPException(status_code=404, detail='Node not found')
+    node = await get_scoped_node(data.node_id, db)
     response = await _request(node, 'PUT', '/openvpn/server', json=data.model_dump())
     return response.json()
 
@@ -84,11 +83,11 @@ async def create_client(data: ClientIn, auth: dict = Depends(require_auth), db: 
     node = await db.get(Node, data.node_id)
     if not node:
         raise HTTPException(status_code=404, detail='Node not found')
-    user = await db.get(User, data.user_id) if data.user_id else None
+    user = await get_scoped_user(data.user_id, db) if data.user_id else None
     if user is None:
-        user = await db.scalar(select(User).where(User.name == data.name))
+        user = await db.scalar(select(User).where(User.name == data.name, owner_filter(User.owner_admin_id)))
         if user is None:
-            user = User(name=data.name)
+            user = User(name=data.name, owner_admin_id=tenant_owner_for_create())
             db.add(user)
             await db.flush()
     user.traffic_limit_bytes = int(data.traffic_gb * 1024 * 1024 * 1024) if data.traffic_gb > 0 else 0
@@ -98,7 +97,7 @@ async def create_client(data: ClientIn, auth: dict = Depends(require_auth), db: 
     if existing:
         raise HTTPException(status_code=409, detail='OpenVPN client already exists')
     response = await _request(node, 'POST', '/openvpn/clients', json={'name': data.name})
-    client = OpenVPNClient(id=str(uuid.uuid4()), user_id=user.id, node_id=node.id, name=data.name, status='active', created_at=datetime.now(UTC))
+    client = OpenVPNClient(id=str(uuid.uuid4()), user_id=user.id, node_id=node.id, name=data.name, status='active', created_at=datetime.now(UTC), owner_admin_id=tenant_owner_for_create())
     db.add(client)
     await db.commit()
     await db.refresh(client)
@@ -107,14 +106,14 @@ async def create_client(data: ClientIn, auth: dict = Depends(require_auth), db: 
 @router.get('/clients')
 async def list_clients(auth: dict = Depends(require_auth), db: AsyncSession = Depends(get_db)):
     _guard(auth, 'configs.view')
-    rows = (await db.execute(select(OpenVPNClient).where(OpenVPNClient.status == 'active').order_by(OpenVPNClient.created_at.desc()))).scalars().all()
+    rows = (await db.execute(select(OpenVPNClient).where(OpenVPNClient.status == 'active', owner_filter(OpenVPNClient.owner_admin_id)).order_by(OpenVPNClient.created_at.desc()))).scalars().all()
     return [{'id': c.id, 'user_id': c.user_id, 'node_id': c.node_id, 'name': c.name, 'status': c.status, 'created_at': c.created_at} for c in rows]
 
 @router.get('/clients/{client_id}/config')
 async def download_client(client_id: str, auth: dict = Depends(require_auth), db: AsyncSession = Depends(get_db)):
     _guard(auth, 'configs.download')
     client = await db.get(OpenVPNClient, client_id)
-    if not client or client.status != 'active':
+    if not client or client.status != 'active' or (not __import__('app.routers.auth', fromlist=['is_super_admin']).is_super_admin(__import__('app.routers.auth', fromlist=['current_admin']).current_admin()) and client.owner_admin_id != __import__('app.routers.auth', fromlist=['tenant_root']).tenant_root(__import__('app.routers.auth', fromlist=['current_admin']).current_admin())):
         raise HTTPException(status_code=404, detail='OpenVPN client not found')
     node = await db.get(Node, client.node_id)
     if not node:
