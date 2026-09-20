@@ -5,7 +5,7 @@ from sqlalchemy.orm import Mapped,mapped_column
 from .db import Base
 def now():return datetime.now(timezone.utc)
 def uid():return str(uuid.uuid4())
-class RoleName(str,enum.Enum): platform_owner="platform_owner";tenant_manager="tenant_manager";tenant_operator="tenant_operator";client="client"
+class RoleName(str,enum.Enum): platform_owner="platform_owner";tenant_manager="tenant_manager";tenant_operator="tenant_operator";representative="representative";client="client"
 class NodeState(str,enum.Enum): discovered="DISCOVERED";authenticating="AUTHENTICATING";installing="INSTALLING";configuring="CONFIGURING";health_check="HEALTH_CHECK";syncing="SYNCING";ready="READY";degraded="DEGRADED";offline="OFFLINE";provision_failed="PROVISION_FAILED";quarantined="QUARANTINED"
 class Protocol(str,enum.Enum): wireguard="wireguard";amneziawg="amneziawg";openvpn="openvpn"
 class ResourceState(str,enum.Enum): active="ACTIVE";suspended="SUSPENDED";expired="EXPIRED";revoked="REVOKED"
@@ -25,6 +25,10 @@ class AdminRole(Base):
  __tablename__="admin_roles";admin_id:Mapped[str]=mapped_column(ForeignKey("admins.id",ondelete="CASCADE"),primary_key=True);role_id:Mapped[str]=mapped_column(ForeignKey("roles.id",ondelete="CASCADE"),primary_key=True)
 class AdminPermission(Base):
  __tablename__="admin_permissions";admin_id:Mapped[str]=mapped_column(ForeignKey("admins.id",ondelete="CASCADE"),primary_key=True);permission_id:Mapped[str]=mapped_column(ForeignKey("permissions.id",ondelete="CASCADE"),primary_key=True)
+class AdminInboundScope(Base):
+ __tablename__="admin_inbound_scopes"
+ admin_id:Mapped[str]=mapped_column(ForeignKey("admins.id",ondelete="CASCADE"),primary_key=True)
+ inbound_id:Mapped[str]=mapped_column(ForeignKey("inbounds.id",ondelete="CASCADE"),primary_key=True)
 class Node(Base):
  __tablename__="nodes"
  id:Mapped[str]=mapped_column(String(36),primary_key=True,default=uid);tenant_id:Mapped[str]=mapped_column(ForeignKey("tenants.id",ondelete="CASCADE"),index=True);name:Mapped[str]=mapped_column(String(160));address:Mapped[str]=mapped_column(String(255));agent_url:Mapped[str|None]=mapped_column(String(512));state:Mapped[NodeState]=mapped_column(Enum(NodeState),default=NodeState.discovered);agent_version:Mapped[str|None]=mapped_column(String(40));capabilities:Mapped[str]=mapped_column(Text,default="{}");last_seen_at:Mapped[datetime|None]=mapped_column(DateTime(timezone=True));created_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=now)
@@ -39,7 +43,7 @@ class InboundWireGuard(Base):
 class InboundOpenVPN(Base):
  __tablename__="inbound_openvpn";inbound_id:Mapped[str]=mapped_column(ForeignKey("inbounds.id",ondelete="CASCADE"),primary_key=True);transport:Mapped[str]=mapped_column(String(8),default="udp");server_network:Mapped[str]=mapped_column(String(120));tls_min:Mapped[str]=mapped_column(String(20),default="1.2");tls_crypt:Mapped[bool]=mapped_column(Boolean,default=True);cipher_policy:Mapped[str]=mapped_column(String(255),default="AES-256-GCM:AES-128-GCM");ca_pem:Mapped[str|None]=mapped_column(Text);server_cert_pem:Mapped[str|None]=mapped_column(Text);server_key_encrypted:Mapped[str|None]=mapped_column(Text);ca_key_encrypted:Mapped[str|None]=mapped_column(Text);crl_pem:Mapped[str|None]=mapped_column(Text);tls_crypt_key_encrypted:Mapped[str|None]=mapped_column(Text)
 class Client(Base):
- __tablename__="clients";id:Mapped[str]=mapped_column(String(36),primary_key=True,default=uid);tenant_id:Mapped[str]=mapped_column(ForeignKey("tenants.id",ondelete="CASCADE"),index=True);inbound_id:Mapped[str]=mapped_column(ForeignKey("inbounds.id",ondelete="CASCADE"),index=True);name:Mapped[str]=mapped_column(String(160));status:Mapped[ResourceState]=mapped_column(Enum(ResourceState),default=ResourceState.active);assigned_address:Mapped[str]=mapped_column(String(120));expires_at:Mapped[datetime|None]=mapped_column(DateTime(timezone=True));created_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=now);__table_args__=(UniqueConstraint("tenant_id","inbound_id","name"),UniqueConstraint("tenant_id","inbound_id","assigned_address"))
+ __tablename__="clients";id:Mapped[str]=mapped_column(String(36),primary_key=True,default=uid);tenant_id:Mapped[str]=mapped_column(ForeignKey("tenants.id",ondelete="CASCADE"),index=True);created_by_admin_id:Mapped[str|None]=mapped_column(ForeignKey("admins.id",ondelete="SET NULL"),index=True);inbound_id:Mapped[str]=mapped_column(ForeignKey("inbounds.id",ondelete="CASCADE"),index=True);name:Mapped[str]=mapped_column(String(160));status:Mapped[ResourceState]=mapped_column(Enum(ResourceState),default=ResourceState.active);assigned_address:Mapped[str]=mapped_column(String(120));expires_at:Mapped[datetime|None]=mapped_column(DateTime(timezone=True));created_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=now);__table_args__=(UniqueConstraint("tenant_id","inbound_id","name"),UniqueConstraint("tenant_id","inbound_id","assigned_address"))
 class ClientCredential(Base):
  __tablename__="client_credentials";id:Mapped[str]=mapped_column(String(36),primary_key=True,default=uid);client_id:Mapped[str]=mapped_column(ForeignKey("clients.id",ondelete="CASCADE"),index=True);device_id:Mapped[str|None]=mapped_column(ForeignKey("devices.id",ondelete="SET NULL"),index=True);public_identifier:Mapped[str]=mapped_column(String(255));encrypted_private_material:Mapped[str|None]=mapped_column(Text);fingerprint:Mapped[str]=mapped_column(String(255),unique=True);expires_at:Mapped[datetime|None]=mapped_column(DateTime(timezone=True));revoked_at:Mapped[datetime|None]=mapped_column(DateTime(timezone=True));created_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=now)
 class Device(Base):
