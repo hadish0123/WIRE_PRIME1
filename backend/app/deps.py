@@ -16,8 +16,8 @@ def current_admin(request:Request,creds:HTTPAuthorizationCredentials|None=Depend
  if not a or not a.enabled: raise HTTPException(401,"Account disabled")
  request.state.tenant_id=a.tenant_id;request.state.admin_id=a.id
  if a.role==RoleName.platform_owner:
-  db.execute(text("select set_config('app.is_platform','true',true)"))
-  db.execute(text("select set_config('app.tenant_id','',true)"))
+  db.execute(text("select set_config('app.is_platform','true',false)"))
+  db.execute(text("select set_config('app.tenant_id','' ,false)"))
  elif a.tenant_id:
   db.execute(text("select set_config('app.is_platform','false',true)"))
   db.execute(text("select set_config('app.tenant_id',:tenant,true)"),{"tenant":a.tenant_id})
