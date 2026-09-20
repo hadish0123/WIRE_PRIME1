@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from ..db import get_db
 from ..deps import current_admin,require_tenant_manager
 from ..models import Admin,Node,NodeState,ProvisioningTask
-from ..schemas import NodeIn,NodeOut
+from ..schemas import NodeIn,NodeOut,AutoNodeIn\nfrom ..services.ssh_provisioner import install_node_agent,verify_agent,SSHProvisionError\nimport json
 from ..services.audit import record
 from ..security import new_bootstrap_token
 from ..config import settings
@@ -20,6 +20,35 @@ def create_node(data:NodeIn,request:Request,admin:Admin=Depends(require_tenant_m
  if settings.environment=="production" and data.agent_url and not data.agent_url.startswith("https://"): raise HTTPException(422,"Production Node Agent URL must use HTTPS")
  n=Node(tenant_id=admin.tenant_id,name=data.name,address=data.address,agent_url=data.agent_url)
  db.add(n);db.flush();record(db,admin,request,"node.create","node",n.id);db.commit();db.refresh(n);return n
+
+@router.post("/auto-provision")
+async def auto_provision(data:AutoNodeIn,request:Request,admin:Admin=Depends(require_tenant_manager),db:Session=Depends(get_db)):
+ if not admin.tenant_id: raise HTTPException(400,"Tenant required")
+ if not settings.agent_verify_public_key: raise HTTPException(503,"Agent verification key is not configured")
+ n=Node(tenant_id=admin.tenant_id,name=data.name,address=data.address,agent_url=None,state=NodeState.installing)
+ db.add(n);db.flush();record(db,admin,request,"node.auto_provision.start","node",n.id,details={"address":data.address});db.commit()
+ try:
+  result=await install_node_agent(data.address,data.ssh_port,data.ssh_username,data.ssh_password,n.id,settings.agent_verify_public_key)
+  agent_url=f"https://{data.address}:{result["agent_port"]}" if result["agent_port"]!=443 else f"https://{data.address}"
+  n.agent_url=agent_url
+  token=create_agent_token(n.id,n.tenant_id,["read","write"])
+  health=await verify_agent(agent_url,token)
+  n.state=NodeState.ready
+  n.agent_version=health.get("version")
+  n.capabilities=json.dumps(health.get("capabilities") or {},separators=(",",":"))
+  n.last_seen_at=datetime.now(timezone.utc)
+  db.commit();db.refresh(n)
+  record(db,admin,request,"node.auto_provision.ready","node",n.id,details={"agent_url":agent_url})
+  db.commit()
+  return {"node":n,"agent_url":agent_url,"status":"READY","capabilities":health.get("capabilities") or {}}
+ except SSHProvisionError as e:
+  n.state=NodeState.provision_failed
+  db.commit()
+  raise HTTPException(502,str(e))
+ except Exception as e:
+  n.state=NodeState.provision_failed
+  db.commit()
+  raise HTTPException(502,f"Automatic Node provisioning failed: {e}")
 
 @router.post("/{node_id}/provision")
 def provision(node_id:str,request:Request,admin:Admin=Depends(require_tenant_manager),db:Session=Depends(get_db)):
