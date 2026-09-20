@@ -12,7 +12,7 @@ def get_quota(client_id:str,admin:Admin=Depends(current_admin),db:Session=Depend
  if not q:raise HTTPException(404,"Quota not found")
  return q
 @router.post("")
-def set_quota(body:dict,admin:Admin=Depends(current_admin),db:Session=Depends(get_db)):
+def set_quota(body:dict,admin:Admin=Depends(require_tenant_manager),db:Session=Depends(get_db)):
  cid=body.get("client_id");c=db.query(Client).filter(Client.id==cid,Client.tenant_id==admin.tenant_id).first()
  if not c:raise HTTPException(404,"Client not found")
  q=db.query(Quota).filter(Quota.client_id==cid,Quota.tenant_id==admin.tenant_id).first()
