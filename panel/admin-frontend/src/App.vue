@@ -43,6 +43,9 @@
           />
         </div>
         <nav :aria-label="$t('navigation.menu')">
+          <RouterLink to="/admins"
+            ><i class="pi pi-shield" /> Admins</RouterLink
+          >
           <RouterLink to="/nodes"
             ><i class="pi pi-server" /> {{ $t('navigation.nodes') }}</RouterLink
           >
