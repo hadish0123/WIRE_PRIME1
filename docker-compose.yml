@@ -1,0 +1,29 @@
+services:
+ api:
+  build: ./backend
+  environment:
+   DATABASE_URL: postgresql+psycopg://primevpn:primevpn@db:5432/primevpn
+   JWT_SECRET: change-me
+   ENVIRONMENT: development
+  ports: ["8000:8000"]
+  depends_on: [db]
+ worker:
+  build: ./backend
+  command: ["python","-m","app.worker"]
+  environment:
+   DATABASE_URL: postgresql+psycopg://primevpn:primevpn@db:5432/primevpn
+   ENVIRONMENT: development
+   JWT_SECRET: change-me
+  depends_on: [db]
+ web:
+  build: ./frontend
+  ports: ["5173:80"]
+ db:
+  image: postgres:17
+  environment:
+   POSTGRES_DB: primevpn
+   POSTGRES_USER: primevpn
+   POSTGRES_PASSWORD: primevpn
+  volumes: ["primevpn-db:/var/lib/postgresql/data"]
+volumes:
+ primevpn-db: {}
