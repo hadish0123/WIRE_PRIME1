@@ -457,8 +457,9 @@ async def restore_missing_peers_for_user(db: AsyncSession, user_id: str) -> set[
     Returns the node ids that gained a peer, so the caller can queue them like any other change.
     """
     created: set[str] = set()
+    owner = await db.get(User, user_id)
     for device in await list_live_devices(db, user_id):
-        created |= await create_pending_peers_for_device(db, device)
+        created |= await create_pending_peers_for_device(db, device, owner_admin_id=owner.owner_admin_id if owner else None)
     return created
 
 
