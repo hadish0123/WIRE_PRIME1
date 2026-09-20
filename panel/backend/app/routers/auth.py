@@ -41,7 +41,7 @@ class LoginRequest(BaseModel):
 
 def hash_password(password: str) -> str:
     salt = secrets.token_bytes(16)
-    n, r, p = 2**15, 8, 1
+    n, r, p = 2**14, 8, 1
     digest = hashlib.scrypt(password.encode(), salt=salt, n=n, r=r, p=p, dklen=64)
     return 'scrypt$' + str(n) + '$' + str(r) + '$' + str(p) + '$' + base64.urlsafe_b64encode(salt).decode() + '$' + base64.urlsafe_b64encode(digest).decode()
 
