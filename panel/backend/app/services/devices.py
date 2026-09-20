@@ -721,7 +721,11 @@ async def live_device_views(db: AsyncSession, user_id: str) -> list[AdminDevice]
     devices = await list_live_devices(db, user_id)
     if not devices:
         return []
-    nodes = (await db.execute(select(Node).order_by(Node.name, Node.id))).scalars().all()
+    owner = await db.get(User, user_id)
+    node_stmt = select(Node).order_by(Node.name, Node.id)
+    if owner and owner.owner_admin_id:
+        node_stmt = node_stmt.where(Node.owner_admin_id == owner.owner_admin_id)
+    nodes = (await db.execute(node_stmt)).scalars().all()
     peers = (
         (
             await db.execute(
