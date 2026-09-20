@@ -40,4 +40,11 @@ export const quotas={
  set:(body:unknown)=>api<any>("/quotas",{method:"POST",body:JSON.stringify(body)}),overview:()=>api<any[]>("/quotas/overview/all")
 };
 export const audit={list:()=>api<any[]>("/audit")};
-export const admins={list:()=>api<any[]>("/admins"),create:(body:unknown)=>api<any>("/admins",{method:"POST",body:JSON.stringify(body)})};
+export const admins={
+ list:()=>api<any[]>("/admins"),
+ permissions:()=>api<any>("/admins/permissions"),
+ inbounds:()=>api<any[]>("/admins/inbounds"),
+ create:(body:unknown)=>api<any>("/admins",{method:"POST",body:JSON.stringify(body)}),
+ update:(id:string,body:unknown)=>api<any>("/admins/"+id,{method:"PATCH",body:JSON.stringify(body)}),
+ disable:(id:string)=>api<any>("/admins/"+id,{method:"DELETE"})
+};
