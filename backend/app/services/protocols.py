@@ -25,4 +25,4 @@ def render_wireguard(c:WireGuardConfig)->str:
 def render_openvpn(server_network:str,port:int,transport:str="udp",tls_min:str="1.2",tls_crypt_path:str="/etc/primevpn/tls-crypt.key")->str:
  ipaddress.ip_network(server_network,strict=False)
  if not 1<=port<=65535 or transport not in {"udp","tcp"} or tls_min not in {"1.2","1.3"}:raise ValueError("invalid OpenVPN parameters")
- return "\n".join([f"port {port}",f"proto {transport}",f"server {server_network.split('/')[0]} {str(ipaddress.ip_network(server_network,strict=False).netmask)}","topology subnet","tls-version-min "+tls_min,"tls-crypt "+tls_crypt_path,"data-ciphers AES-256-GCM:AES-128-GCM","keepalive 10 60","persist-key","persist-tun","status /run/primevpn/openvpn.status 10","verb 3"])+"\n"
+ return "\n".join([f"port {port}",f"proto {transport}",f"server {server_network.split('/')[0]} {str(ipaddress.ip_network(server_network,strict=False).netmask)}","topology subnet","tls-version-min "+tls_min,"tls-crypt "+tls_crypt_path,"data-ciphers AES-256-GCM:AES-128-GCM","keepalive 10 60","persist-key","persist-tun","status /run/primevpn/openvpn.status 10\nstatus-version 3","verb 3"])+"\n"

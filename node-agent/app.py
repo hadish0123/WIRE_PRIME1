@@ -43,3 +43,20 @@ def counters(interface:str,x_agent_token:str|None=Header(default=None)):
   c=line.split("\t")
   if len(c)>=8:peers.append({"public_key":c[0],"endpoint":c[2],"last_handshake":int(c[4]),"bytes_received":int(c[5]),"bytes_sent":int(c[6])})
  return {"interface":interface,"peers":peers}
+def parse_openvpn_status(path):
+ rows=[]
+ if not os.path.isfile(path): raise HTTPException(503,"OpenVPN status unavailable")
+ with open(path,"r",encoding="utf-8",errors="replace") as f: lines=f.read().splitlines()
+ in_clients=False
+ for line in lines:
+  if line.startswith("Common Name,"):
+   in_clients=True;continue
+  if in_clients:
+   if line=="ROUTING TABLE" or line.startswith("GLOBAL STATS"):break
+   p=line.split(",")
+   if len(p)>=5: rows.append({"common_name":p[0],"real_address":p[1],"bytes_received":int(p[2]),"bytes_sent":int(p[3]),"connected_since":p[4]})
+ return rows
+@app.get("/counters/openvpn/{instance}")
+def openvpn_counters(instance:str,x_agent_token:str|None=Header(default=None)):
+ auth(x_agent_token,"read");safe_interface(instance)
+ return {"instance":instance,"clients":parse_openvpn_status(f"/run/primevpn/{instance}.status")}
