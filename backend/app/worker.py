@@ -86,7 +86,7 @@ def enforce_quotas(db):
             if since: query=query.filter(TrafficUsage.last_seen>=since)
             return int(query.scalar() or 0)
         total,daily,monthly=used(),used(day),used(month)
-        devices=int(db.query(func.count(Device.id)).filter(Device.client_id==q.client_id,Device.tenant_id==q.tenant_id).scalar() or 0)
+        devices=int(db.query(func.count(Device.id)).join(ClientCredential,ClientCredential.device_id==Device.id).filter(Device.client_id==q.client_id,Device.tenant_id==q.tenant_id,ClientCredential.revoked_at.is_(None)).scalar() or 0)
         c=db.query(Client).filter(Client.id==q.client_id,Client.tenant_id==q.tenant_id).first()
         if not c: continue
         limited=False
