@@ -1,9 +1,11 @@
 from fastapi import Depends,HTTPException,Request
 from fastapi.security import HTTPBearer,HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
+from sqlalchemy import func
+from datetime import datetime,timezone,timedelta
 from .db import get_db,set_platform_context,set_tenant_context
 from .security import decode_access_token
-from .models import Admin,RoleName,Client,AdminInboundScope
+from .models import Admin,RoleName,Client,AdminInboundScope,TrafficUsage
 
 bearer=HTTPBearer(auto_error=False)
 
@@ -47,7 +49,38 @@ def current_admin(
         set_tenant_context(db,a.tenant_id)
     else:
         raise HTTPException(403,"Tenant context required")
+    state,_,_=admin_quota_state(db,a)
+    if state=="EXPIRED":
+        raise HTTPException(403,"Admin access period expired")
     return a
+
+def admin_quota_usage(db:Session,admin:Admin)->int:
+    if admin.role==RoleName.platform_owner:
+        return 0
+    value=(db.query(func.coalesce(func.sum(TrafficUsage.bytes_in+TrafficUsage.bytes_out),0))
+           .join(Client,Client.id==TrafficUsage.client_id)
+           .filter(Client.tenant_id==admin.tenant_id,Client.created_by_admin_id==admin.id)
+           .scalar())
+    return int(value or 0)
+
+def admin_quota_state(db:Session,admin:Admin):
+    if admin.role==RoleName.platform_owner:
+        return "NORMAL",0,None
+    now=datetime.now(timezone.utc)
+    started=admin.quota_started_at
+    if started and started.tzinfo is None:
+        started=started.replace(tzinfo=timezone.utc)
+    days=int(admin.quota_duration_days or 0)
+    expires=started+timedelta(days=days) if started and days>0 else None
+    used=admin_quota_usage(db,admin)
+    if expires and expires<=now:
+        return "EXPIRED",used,expires
+    limit=int(admin.traffic_limit_bytes or 0)
+    if limit>0 and used>=limit:
+        return "LIMIT_REACHED",used,expires
+    if limit>0 and used>=limit*0.8:
+        return "WARNING",used,expires
+    return "NORMAL",used,expires
 
 def has_permission(admin:Admin,permission:str)->bool:
     perms=ROLE_PERMISSIONS.get(admin.role,set())
