@@ -11,5 +11,5 @@ async def request_context(request:Request,call_next):
 def healthz():return {"status":"ok","version":settings.version}
 @app.get("/readyz")
 def readyz():return {"status":"ready"}
-from .routers import auth,tenants,nodes,inbounds,clients,traffic,audit
-app.include_router(auth.router,prefix="/api/v1/auth",tags=["auth"]);app.include_router(tenants.router,prefix="/api/v1/tenants",tags=["tenants"]);app.include_router(nodes.router,prefix="/api/v1/nodes",tags=["nodes"]);app.include_router(inbounds.router,prefix="/api/v1/inbounds",tags=["inbounds"]);app.include_router(clients.router,prefix="/api/v1/clients",tags=["clients"]);app.include_router(traffic.router,prefix="/api/v1/traffic",tags=["traffic"]);app.include_router(audit.router,prefix="/api/v1/audit",tags=["audit"])
+from .routers import auth,tenants,nodes,inbounds,clients,traffic,audit,quotas,admins
+app.include_router(auth.router,prefix="/api/v1/auth",tags=["auth"]);app.include_router(tenants.router,prefix="/api/v1/tenants",tags=["tenants"]);app.include_router(nodes.router,prefix="/api/v1/nodes",tags=["nodes"]);app.include_router(inbounds.router,prefix="/api/v1/inbounds",tags=["inbounds"]);app.include_router(clients.router,prefix="/api/v1/clients",tags=["clients"]);app.include_router(traffic.router,prefix="/api/v1/traffic",tags=["traffic"]);app.include_router(audit.router,prefix="/api/v1/audit",tags=["audit"]);app.include_router(quotas.router,prefix="/api/v1/quotas",tags=["quotas"]);app.include_router(admins.router,prefix="/api/v1/admins",tags=["admins"])
