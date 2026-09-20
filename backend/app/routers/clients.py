@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from ..db import get_db
-from ..deps import current_admin, require_tenant_manager, can_access_client, representative_can_use_inbound
+from ..deps import current_admin, require_tenant_manager, can_access_client, representative_can_use_inbound, admin_quota_state
 from ..models import Admin, Client, Device, Inbound, RoleName, InboundOpenVPN, ClientCredential, ResourceState, Protocol, Node, TrafficUsage, TrafficSnapshot, Session as ClientSession, Quota
 from ..schemas import ClientIn, ClientOut, ClientDetailOut, ClientUpdateIn, DeviceOut
 from ..services.audit import record
@@ -87,6 +87,9 @@ def list_clients(search:str|None=Query(default=None,max_length=100),status:str|N
 
 @router.post("",response_model=ClientOut)
 def create_client(data:ClientIn,request:Request,admin:Admin=Depends(require_tenant_manager),db:Session=Depends(get_db)):
+ quota_state,_,_=admin_quota_state(db,admin)
+ if quota_state=="EXPIRED":raise HTTPException(403,"Admin access period expired")
+ if quota_state=="LIMIT_REACHED":raise HTTPException(403,"Admin traffic quota reached")
  inbound_q=db.query(Inbound).filter(Inbound.id==data.inbound_id)
  if admin.role!=RoleName.platform_owner:inbound_q=inbound_q.filter(Inbound.tenant_id==admin.tenant_id)
  inbound=inbound_q.first()
