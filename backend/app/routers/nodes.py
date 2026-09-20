@@ -29,7 +29,7 @@ async def auto_provision(data:AutoNodeIn,request:Request,admin:Admin=Depends(req
  db.add(n);db.flush();record(db,admin,request,"node.auto_provision.start","node",n.id,details={"address":data.address});db.commit()
  try:
   result=await install_node_agent(data.address,data.ssh_port,data.ssh_username,data.ssh_password,n.id,settings.agent_verify_public_key)
-  agent_url=f"https://{data.address}:{result["agent_port"]}" if result["agent_port"]!=443 else f"https://{data.address}"
+  agent_url=(f"https://{data.address}:{result['agent_port']}" if result['agent_port']!=443 else f"https://{data.address}")
   n.agent_url=agent_url
   token=create_agent_token(n.id,n.tenant_id,["read","write"])
   health=await verify_agent(agent_url,token)
