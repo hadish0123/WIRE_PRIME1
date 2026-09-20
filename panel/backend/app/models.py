@@ -198,6 +198,23 @@ class Device(Base):
     )
 
 
+class OpenVPNClient(Base):
+    __tablename__ = 'openvpn_clients'
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(String, ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
+    node_id: Mapped[str] = mapped_column(String, ForeignKey('nodes.id', ondelete='CASCADE'), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False, default='active')
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    user: Mapped[User] = relationship('User')
+    node: Mapped[Node] = relationship('Node')
+
+    __table_args__ = (UniqueConstraint('node_id', 'name', name='uq_openvpn_client_node_name'),)
+
+
 class Peer(Base):
     __tablename__ = 'peers'
 
