@@ -361,7 +361,8 @@ async def create_device(db: AsyncSession, user_id: str, *, name: str) -> tuple[D
     device = await _insert_device_with_unique_ip(
         db, user_id=user_id, name=name, public_key=public_key, private_key=private_key
     )
-    node_ids = await create_pending_peers_for_device(db, device)
+    owner = await db.get(User, user_id)
+    node_ids = await create_pending_peers_for_device(db, device, owner_admin_id=owner.owner_admin_id if owner else None)
     return device, node_ids
 
 
@@ -399,13 +400,15 @@ async def create_pending_peer(db: AsyncSession, *, node_id: str, device: Device)
 
 
 async def create_pending_peers_for_device(
-    db: AsyncSession, device: Device, *, node_ids: Iterable[str] | None = None
+    db: AsyncSession, device: Device, *, node_ids: Iterable[str] | None = None, owner_admin_id: str | None = None
 ) -> set[str]:
-    nodes = (
-        list(node_ids)
-        if node_ids is not None
-        else list((await db.execute(select(Node.id))).scalars())
-    )
+    if node_ids is not None:
+        nodes = list(node_ids)
+    else:
+        stmt = select(Node.id)
+        if owner_admin_id:
+            stmt = stmt.where(Node.owner_admin_id == owner_admin_id)
+        nodes = list((await db.execute(stmt)).scalars())
     created: set[str] = set()
     for node_id in nodes:
         if await create_pending_peer(db, node_id=node_id, device=device):
@@ -428,15 +431,10 @@ async def create_pending_peers_for_node(db: AsyncSession, node: Node) -> set[str
     Devices of blocked users and tombstoned devices are skipped, so a new node never inherits
     deleted or suspended identities.
     """
-    devices = (
-        (
-            await db.execute(
-                select(Device).join(User, Device.user_id == User.id).where(*_live_device_filters())
-            )
-        )
-        .scalars()
-        .all()
-    )
+    stmt = select(Device).join(User, Device.user_id == User.id).where(*_live_device_filters())
+    if node.owner_admin_id:
+        stmt = stmt.where(User.owner_admin_id == node.owner_admin_id)
+    devices = (await db.execute(stmt)).scalars().all()
     created: set[str] = set()
     for device in devices:
         if await create_pending_peer(db, node_id=node.id, device=device):
