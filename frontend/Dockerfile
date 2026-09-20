@@ -1,6 +1,6 @@
 FROM node:22-alpine AS build
 WORKDIR /app
-COPY package.json .
+ARG VITE_API_BASE=/api/v1\nENV VITE_API_BASE=$VITE_API_BASE\nCOPY package.json .
 RUN npm install --ignore-scripts
 COPY . .
 RUN npm run typecheck && npm run build
