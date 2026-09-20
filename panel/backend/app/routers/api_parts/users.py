@@ -233,6 +233,7 @@ async def api_add_user(data: UserIn, db: DB):
 
 class ClientCreate(BaseModel):
     name: str
+    node_id: str
     traffic_gb: float = Field(default=0, ge=0, le=1000000)
     days: int = Field(default=0, ge=0, le=3650)
 
@@ -264,7 +265,12 @@ async def api_create_client(user_id: str, data: ClientCreate, db: DB):
     user.traffic_limit_bytes = requested
     user.expire_at = datetime.now(UTC) + timedelta(days=data.days) if data.days > 0 else None
     user.lifecycle_status = 'active'
-    device, node_ids = await create_device(db, user_id, name=data.name.strip())
+    node = await db.get(Node, data.node_id)
+    if node is None:
+        raise HTTPException(status_code=404, detail='Node not found')
+    from app.routers.api_parts.common import guard_tenant_owner
+    guard_tenant_owner(node.owner_admin_id)
+    device, node_ids = await create_device(db, user_id, name=data.name.strip(), node_ids=[node.id])
     await db.commit()
     await db.refresh(device)
     await _enqueue_sync_nodes_for_user(db, user)
