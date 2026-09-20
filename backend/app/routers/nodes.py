@@ -2,7 +2,7 @@ from fastapi import APIRouter,Depends,HTTPException,Request
 from datetime import datetime,timezone,timedelta
 from sqlalchemy.orm import Session
 from ..db import get_db
-from ..deps import current_admin
+from ..deps import current_admin,require_tenant_manager
 from ..models import Admin,Node,NodeState,ProvisioningTask
 from ..schemas import NodeIn,NodeOut
 from ..services.audit import record
