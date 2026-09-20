@@ -3,7 +3,7 @@ from datetime import datetime,timezone
 from sqlalchemy import func
 from .db import SessionLocal
 from .models import Job,Quota,TrafficUsage,Device,Client,Inbound,ClientCredential,Protocol,Node,ResourceState
-from .services.agent_client import revoke_wireguard_peer
+from .services.agent_client import revoke_wireguard_peer,deploy_openvpn_crl\nfrom .services.openvpn_revoke import revoke_certificate\nfrom .security import decrypt_secret\nimport json
 def enforce_quotas(db):
  now=datetime.now(timezone.utc);day_start=now.replace(hour=0,minute=0,second=0,microsecond=0);month_start=now.replace(day=1,hour=0,minute=0,second=0,microsecond=0)
  for q in db.query(Quota).all():
