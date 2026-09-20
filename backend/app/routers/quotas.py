@@ -3,7 +3,7 @@ from fastapi import APIRouter,Depends,HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from ..db import get_db
-from ..deps import current_admin
+from ..deps import current_admin,require_tenant_manager
 from ..models import Admin,Client,Quota,TrafficUsage
 router=APIRouter()
 @router.get("/{client_id}")
