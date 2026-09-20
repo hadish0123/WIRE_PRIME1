@@ -1,6 +1,6 @@
 import json
 from sqlalchemy.orm import Session
-from ..models import Node,Inbound,Client,ClientCredential,Device,InboundWireGuard,InboundOpenVPN,Protocol,NodeState
+from ..models import Node,Inbound,Client,ClientCredential,Device,InboundWireGuard,InboundOpenVPN,Protocol,NodeState,ProvisioningTask
 from ..security import decrypt_secret
 
 def _wg_config(node,inbound,db):
@@ -107,4 +107,8 @@ def sync_node(db,node,agent_client):
             if not item.get("openvpn"): raise RuntimeError(f"Missing OpenVPN configuration for {item['interface']}")
             agent_client.apply_openvpn(node,item["interface"],item["openvpn"])
     node.state=NodeState.ready
+    task=db.query(ProvisioningTask).filter(ProvisioningTask.node_id==node.id,ProvisioningTask.tenant_id==node.tenant_id).order_by(ProvisioningTask.created_at.desc()).first()
+    if task:
+        task.state=NodeState.ready.value
+        task.error=None
     return desired
