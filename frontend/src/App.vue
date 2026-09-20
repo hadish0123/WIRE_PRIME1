@@ -12,7 +12,7 @@ async function verifyMfa(){try{const r=await auth.mfaVerify(mfaToken.value,mfaCo
 async function act(fn:()=>Promise<any>,success="انجام شد"){try{await fn();notice.value=success;modal.value=null;await load()}catch(e){notice.value=e instanceof Error?e.message:"خطا"}}
 async function issueConfig(id:string){try{const c=await clients.credential(id);artifact.value=await configs.download(c.artifact_id);modal.value="artifact"}catch(e){notice.value=e instanceof Error?e.message:"خطا در ساخت Config"}}
 async function copyArtifact(){if(artifact.value?.payload)await navigator.clipboard.writeText(artifact.value.payload);notice.value="Config کپی شد"}
-async function provision(id:string){try{const r=await nodes.provision(id);notice.value=r.bootstrap_token?"Bootstrap token ساخته شد؛ برای نصب Agent استفاده کن":"Provisioning ثبت شد";if(r.bootstrap_token)artifact.value=r;modal.value=r.bootstrap_token?"artifact":null;await load()}catch(e){notice.value=e instanceof Error?e.message:"Provisioning ناموفق"}}
+async function provision(id:string){try{const r=await nodes.provision(id);notice.value=r.bootstrap_token?"Bootstrap token ساخته شد؛ برای نصب Agent استفاده کن":"Provisioning ثبت شد";if(r.bootstrap_token)notice.value=`Bootstrap Token: ${r.bootstrap_token}`;modal.value=null;await load()}catch(e){notice.value=e instanceof Error?e.message:"Provisioning ناموفق"}}
 function logout(){localStorage.removeItem("primevpn_access");me.value=null}
 onMounted(load);
 </script>
