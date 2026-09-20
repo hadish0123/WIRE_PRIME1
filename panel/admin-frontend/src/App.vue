@@ -49,22 +49,22 @@
         </div>
         <div class="sidebar-menu-title">MENU</div>
         <nav v-if="menuOpen" :aria-label="$t('navigation.menu')">
-          <RouterLink to="/openvpn"
+          <RouterLink to="/openvpn" @click="menuOpen = false"
             ><i class="pi pi-lock" /> اینباندها</RouterLink
           >
-          <RouterLink to="/admins"
+          <RouterLink to="/admins" @click="menuOpen = false"
             ><i class="pi pi-shield" /> مدیرها</RouterLink
           >
-          <RouterLink to="/nodes"
+          <RouterLink to="/nodes" @click="menuOpen = false"
             ><i class="pi pi-server" /> {{ $t('navigation.nodes') }}</RouterLink
           >
-          <RouterLink to="/users"
+          <RouterLink to="/users" @click="menuOpen = false"
             ><i class="pi pi-users" /> کلاینت‌ها</RouterLink
           >
-          <RouterLink to="/integrations/remnawave"
+          <RouterLink to="/integrations/remnawave" @click="menuOpen = false"
             ><i class="pi pi-sync" /> {{ $t('navigation.remnawave') }}</RouterLink
           >
-          <RouterLink to="/integrations/telegram-proxy"
+          <RouterLink to="/integrations/telegram-proxy" @click="menuOpen = false"
             ><i class="pi pi-send" /> {{ $t('navigation.telegramProxy') }}</RouterLink
           >
         </nav>
