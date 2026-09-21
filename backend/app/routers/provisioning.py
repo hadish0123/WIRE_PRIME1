@@ -1,5 +1,6 @@
 from datetime import datetime,timezone,timedelta
 from fastapi import APIRouter,Depends,HTTPException,Request
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel,Field
 from sqlalchemy.orm import Session
 from ..db import get_db,set_platform_context
@@ -7,6 +8,7 @@ from ..deps import current_admin,require_tenant_manager
 from ..models import Admin,Node,ProvisioningTask,NodeState
 from ..services.reconcile import desired_node_state
 from ..security import new_bootstrap_token,hash_token,create_agent_token,decode_agent_token
+from ..config import settings
 router=APIRouter()\n@router.get("/install.sh",response_class=PlainTextResponse)
 def install_script():
  return INSTALL_SCRIPT
@@ -95,7 +97,7 @@ def exchange(task_id:str,body:BootstrapExchange,db:Session=Depends(get_db)):
  node=db.query(Node).filter(Node.id==task.node_id,Node.tenant_id==task.tenant_id).first()
  if not node:raise HTTPException(401,"Invalid bootstrap binding")
  task.bootstrap_token_hash=None;task.bootstrap_expires_at=None;task.state=NodeState.syncing.value;node.state=NodeState.syncing;db.commit()
- return {"node_id":node.id,"tenant_id":node.tenant_id,"agent_token":create_agent_token(node.id,node.tenant_id,["read","write"]),"agent_verify_public_key":__import__("app.config",fromlist=["settings"]).settings.agent_verify_public_key,"expires_in":600}
+ return {"node_id":node.id,"tenant_id":node.tenant_id,"agent_token":create_agent_token(node.id,node.tenant_id,["read","write"]),"agent_verify_public_key":settings.agent_verify_public_key,"expires_in":600}
 
 
 class AgentRegistration(BaseModel):
