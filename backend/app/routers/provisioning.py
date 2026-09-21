@@ -89,7 +89,8 @@ RestartSec=3
 WantedBy=multi-user.target
 EOF
 systemctl daemon-reload
-systemctl enable --now primevpn-node-agent.service
+systemctl enable primevpn-node-agent.service >/dev/null
+systemctl restart primevpn-node-agent.service
 sleep 2
 curl -kfsS --max-time 5 "https://127.0.0.1:$PORT/healthz" >/dev/null
 if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q active; then ufw allow "$PORT/tcp" >/dev/null; fi
