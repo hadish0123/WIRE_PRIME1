@@ -26,6 +26,7 @@ def _validate_address(inbound,address):
   network=ipaddress.ip_network(inbound.network,strict=False)
   if assigned.version!=network.version or assigned.ip not in network:raise HTTPException(422,"Assigned address is outside inbound network")
   if assigned.ip==network.network_address:raise HTTPException(422,"Network address cannot be assigned to a client")
+  if assigned.ip==ipaddress.ip_interface(inbound.address).ip:raise HTTPException(422,"Inbound server address cannot be assigned to a client")
   if network.version==4 and assigned.ip==network.broadcast_address:raise HTTPException(422,"Broadcast address cannot be assigned to a client")
  except ValueError:raise HTTPException(422,"Invalid assigned address")
 
@@ -103,6 +104,7 @@ def create_client(data:ClientIn,request:Request,admin:Admin=Depends(require_tena
   network=ipaddress.ip_network(inbound.network,strict=False)
   prefix=ipaddress.ip_interface(assigned_address).network.prefixlen
   used={ipaddress.ip_interface(v.assigned_address).ip for v in db.query(Client).filter(Client.inbound_id==inbound.id,Client.tenant_id==inbound.tenant_id).all()}
+  used.add(ipaddress.ip_interface(inbound.address).ip)
   for candidate in network.hosts():
    if candidate not in used:
     assigned_address=f"{candidate}/{prefix}"
