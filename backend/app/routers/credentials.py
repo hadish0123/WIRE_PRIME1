@@ -55,7 +55,7 @@ def issue(client_id:str,admin:Admin=Depends(require_tenant_manager),db:Session=D
    used.add(server_ip)
    for candidate in network.hosts():
     if candidate not in used:
-     c.assigned_address=f"{candidate}/{network.prefixlen}"
+     c.assigned_address=f"{candidate}/{ipaddress.ip_interface(c.assigned_address).network.prefixlen}"
      break
    else: raise HTTPException(409,"No free client address remains in this inbound")
   device.assigned_address=allocate_device_address(db,c)
@@ -89,7 +89,7 @@ def issue(client_id:str,admin:Admin=Depends(require_tenant_manager),db:Session=D
   for cred_row,dev in creds:
    if not dev.assigned_address: continue
    peers += ["","[Peer]",f"PublicKey = {cred_row.public_identifier}",f"AllowedIPs = {dev.assigned_address}"]
-  full_config=rendered["config"].rstrip()+"\\n"+"\\n".join(peers)+"\\n"
+  full_config=rendered["config"].rstrip()+"\n"+"\n".join(peers)+"\n"
   apply_agent(node,rendered["protocol"],rendered["interface"],full_config,rendered.get("files"))
  artifact=create_artifact(db,c,inbound.protocol,payload)
  db.commit()
