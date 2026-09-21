@@ -74,13 +74,15 @@ def sync_inbound(inbound_id:str,request:Request,admin:Admin=Depends(require_tena
 def delete_inbound(inbound_id:str,request:Request,admin:Admin=Depends(require_tenant_manager),db:Session=Depends(get_db)):
  item=db.query(Inbound).filter(Inbound.id==inbound_id,Inbound.tenant_id==admin.tenant_id).first()
  if not item:raise HTTPException(404,"Inbound not found")
- node=_node(db,item,admin.tenant_id)
+ node=db.query(Node).filter(Node.id==item.node_id,Node.tenant_id==admin.tenant_id).first()
+ if not node:raise HTTPException(404,"Node not found")
  try:
-  # Remove the whole runtime interface first; this removes all peers for this inbound.
-  # Database foreign keys are CASCADE, so dependent client data is removed with the inbound.
-  remove_agent(node,item.protocol.value,item.interface)
+  # Deletion must remain possible while a node is AUTHENTICATING/OFFLINE.
+  # If the agent is reachable, remove the runtime interface before deleting DB state.
+  if node.agent_url:
+   remove_agent(node,item.protocol.value,item.interface)
  except Exception as e:
-  raise HTTPException(502,f"Inbound remove failed: {e}")
+  raise HTTPException(502,f"Inbound runtime remove failed: {e}")
  record(db,admin,request,"inbound.delete","inbound",item.id)
  db.delete(item)
  db.commit()
