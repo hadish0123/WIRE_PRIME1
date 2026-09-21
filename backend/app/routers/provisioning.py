@@ -53,7 +53,7 @@ done
 mkdir -p /opt/primevpn-node-agent /etc/primevpn
 python3 -m venv /opt/primevpn-node-agent/venv
 /opt/primevpn-node-agent/venv/bin/pip install --upgrade pip >/dev/null
-RAW_BASE="https://raw.githubusercontent.com/hadish0123/WIRE_PRIME1/96829f20f45951a898fccbc5cf2640ace50569e5/node-agent"
+RAW_BASE="https://raw.githubusercontent.com/hadish0123/WIRE_PRIME1/9385b7cf75562ae11acf9fbc8b9cae97570d9191/node-agent"
 curl -fsSL "$RAW_BASE/pyproject.toml" -o /opt/primevpn-node-agent/pyproject.toml
 curl -fsSL "$RAW_BASE/app.py" -o /opt/primevpn-node-agent/app.py
 curl -fsSL "$RAW_BASE/agent_security.py" -o /opt/primevpn-node-agent/agent_security.py
