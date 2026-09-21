@@ -83,7 +83,7 @@ def apply(data:ApplyConfig,x_agent_token:str|None=Header(default=None)):
     subprocess.run([tool,"up",path],capture_output=True,text=True,timeout=20,check=True)
    if data.protocol=="wireguard":
     if shutil.which("sysctl"): subprocess.run(["sysctl","-w","net.ipv4.ip_forward=1"],capture_output=True,text=True,timeout=10,check=True)
-    port_match=re.search(r"(?m)^ListenPort\\s*=\\s*(\\d+)",data.config)
+    port_match=re.search(r"(?m)^ListenPort\s*=\s*(\d+)",data.config)
     if not port_match: raise RuntimeError("WireGuard ListenPort is missing")
     listen_port=int(port_match.group(1))
     if shutil.which("iptables"):
