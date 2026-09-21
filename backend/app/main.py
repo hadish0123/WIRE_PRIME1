@@ -23,29 +23,29 @@ async def _traffic_monitor():
         try:
             set_platform_context(db)
             nodes=db.query(Node).filter(Node.state.in_([NodeState.ready,NodeState.degraded])).all()
-            logger.info("VPN_TRAFFIC_MONITOR_START nodes=%s",len(nodes))
+            print(f"VPN_TRAFFIC_MONITOR_START nodes={len(nodes)}", flush=True)
             for node in nodes:
                 inbounds=db.query(Inbound).filter(Inbound.node_id==node.id,Inbound.enabled.is_(True),Inbound.desired_state=="ACTIVE").all()
-                logger.info("VPN_TRAFFIC_NODE node=%s state=%s inbounds=%s",node.id,node.state,len(inbounds))
+                print(f"VPN_TRAFFIC_NODE node={node.id} state={node.state} inbounds={len(inbounds)}", flush=True)
                 for inbound in inbounds:
                     if inbound.protocol not in {Protocol.wireguard,Protocol.amneziawg}:
                         continue
                     try:
                         data=agent_client.call(node,"GET",f"counters/wireguard/{inbound.interface}",timeout=10)
                         peers=data.get("peers") or []
-                        logger.info("VPN_TRAFFIC node=%s inbound=%s interface=%s listen_port=%s peers=%s",node.id,inbound.id,inbound.interface,inbound.listen_port,len(peers))
+                        print(f"VPN_TRAFFIC node={node.id} inbound={inbound.id} interface={inbound.interface} listen_port={inbound.listen_port} peers={len(peers)}", flush=True)
                         for peer in peers:
                             key=(node.id,inbound.id,peer.get("public_key"))
                             current=(int(peer.get("bytes_received") or 0),int(peer.get("bytes_sent") or 0),int(peer.get("last_handshake") or 0))
                             previous=_traffic_previous.get(key)
                             delta_in=max(0,current[0]-(previous[0] if previous else current[0]))
                             delta_out=max(0,current[1]-(previous[1] if previous else current[1]))
-                            logger.info("VPN_PEER node=%s inbound=%s peer=%s endpoint=%s handshake=%s rx=%s tx=%s delta_rx=%s delta_tx=%s",node.id,inbound.id,peer.get("public_key"),peer.get("endpoint"),current[2],current[0],current[1],delta_in,delta_out)
+                            print(f"VPN_PEER node={node.id} inbound={inbound.id} peer={peer.get("public_key")} endpoint={peer.get("endpoint")} handshake={current[2]} rx={current[0]} tx={current[1]} delta_rx={delta_in} delta_tx={delta_out}", flush=True)
                             _traffic_previous[key]=current
                     except Exception as exc:
-                        logger.warning("VPN_TRAFFIC_ERROR node=%s inbound=%s interface=%s error=%s",node.id,inbound.id,inbound.interface,exc)
+                        print(f"VPN_TRAFFIC_ERROR node={node.id} inbound={inbound.id} interface={inbound.interface} error={exc}", flush=True)
         except Exception as exc:
-            logger.exception("VPN_TRAFFIC_MONITOR_ERROR error=%s",exc)
+            print(f"VPN_TRAFFIC_MONITOR_ERROR error={exc}", flush=True)
         finally:
             db.close()
         await asyncio.sleep(10)
@@ -54,7 +54,7 @@ async def _traffic_monitor():
 async def start_traffic_monitor():
     global _traffic_task
     _traffic_task=asyncio.create_task(_traffic_monitor())
-    logger.info("VPN_TRAFFIC_MONITOR_TASK_CREATED")
+    print("VPN_TRAFFIC_MONITOR_TASK_CREATED", flush=True)
 
 @app.on_event("shutdown")
 async def stop_traffic_monitor():
