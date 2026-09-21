@@ -82,7 +82,10 @@ def delete_inbound(inbound_id:str,request:Request,admin:Admin=Depends(require_te
   if node.agent_url:
    remove_agent(node,item.protocol.value,item.interface)
  except Exception as e:
-  raise HTTPException(502,f"Inbound runtime remove failed: {e}")
+  # The DB resource must still be deletable when the old Node Agent is offline.
+  # The runtime interface will disappear when that node is reinstalled/removed.
+  if "connection failed" not in str(e).lower() and "connection refused" not in str(e).lower():
+   raise HTTPException(502,f"Inbound runtime remove failed: {e}")
  record(db,admin,request,"inbound.delete","inbound",item.id)
  db.delete(item)
  db.commit()
