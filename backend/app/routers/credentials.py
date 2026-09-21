@@ -7,6 +7,8 @@ from ..models import Admin,Client,Device,Inbound,InboundOpenVPN,InboundWireGuard
 from ..security import encrypt_secret,decrypt_secret
 from ..services.credentials import wg_keypair,openvpn_ca,openvpn_server,openvpn_client,openvpn_tls_crypt_key,fingerprint
 from ..services.config_artifacts import create_artifact
+from ..services.inbound_config import render_inbound
+from ..services.agent_client import apply as apply_agent
 from ..services.openvpn_revoke import create_empty_crl
 router=APIRouter()
 
@@ -69,5 +71,16 @@ def issue(client_id:str,admin:Admin=Depends(require_tenant_manager),db:Session=D
  db.flush()
  fp=fingerprint(json.dumps(material,sort_keys=True))
  cred=ClientCredential(client_id=c.id,device_id=device.id,public_identifier=identifier,encrypted_private_material=encrypt_secret(json.dumps(material)),fingerprint=fp)
- db.add(cred);db.flush();artifact=create_artifact(db,c,inbound.protocol,payload);db.commit()
+ db.add(cred);db.flush()
+ if inbound.protocol in {Protocol.wireguard,Protocol.amneziawg}:
+  rendered=render_inbound(inbound,node,db)
+  creds=db.query(ClientCredential,Device).join(Device,Device.id==ClientCredential.device_id).join(Client,Client.id==ClientCredential.client_id).filter(Client.inbound_id==inbound.id,Client.tenant_id==c.tenant_id,ClientCredential.revoked_at.is_(None)).all()
+  peers=[]
+  for cred_row,dev in creds:
+   if not dev.assigned_address: continue
+   peers += ["","[Peer]",f"PublicKey = {cred_row.public_identifier}",f"AllowedIPs = {dev.assigned_address}"]
+  full_config=rendered["config"].rstrip()+"\\n"+"\\n".join(peers)+"\\n"
+  apply_agent(node,rendered["protocol"],rendered["interface"],full_config,rendered.get("files"))
+ artifact=create_artifact(db,c,inbound.protocol,payload)
+ db.commit()
  return {"credential_id":cred.id,"device_id":device.id,"artifact_id":artifact.id,"public_identifier":identifier,"fingerprint":fp,"expires_at":artifact.expires_at}
