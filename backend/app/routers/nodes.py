@@ -36,7 +36,11 @@ def install_token(data:NodeIn,request:Request,admin:Admin=Depends(require_tenant
  record(db,admin,request,"node.install_token","node",n.id,details={"task_id":task.id})
  db.commit()
  from shlex import quote
- backend=str(request.base_url).rstrip("/")
+ if settings.environment == "production":
+  host=request.headers.get("host","").strip()
+  backend="https://"+host if host else str(request.base_url).rstrip("/")
+ else:
+  backend=str(request.base_url).rstrip("/")
  installer=backend+"/api/v1/provisioning/install.sh"
  command=f"curl -fsSL {quote(installer)} | sudo bash -s -- {quote(backend)} {quote(task.id)} {quote(raw)} {quote(data.address)}"
  return {"node_id":n.id,"task_id":task.id,"bootstrap_token":raw,"expires_at":task.bootstrap_expires_at,"install_command":command,"installer_url":installer}
