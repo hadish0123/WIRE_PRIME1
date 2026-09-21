@@ -124,7 +124,7 @@ def node_agent_file(filename: str):
     allowed = {"pyproject.toml", "app.py", "agent_security.py"}
     if filename not in allowed:
         raise HTTPException(404, "Node Agent file not found")
-    path = Path(__file__).resolve().parents[3] / "node-agent" / filename
+    path = Path(__file__).resolve().parents[2] / "node-agent" / filename
     if not path.is_file():
         raise HTTPException(404, "Node Agent file not found")
     return PlainTextResponse(path.read_text(encoding="utf-8"))
