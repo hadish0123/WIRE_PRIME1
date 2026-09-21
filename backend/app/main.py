@@ -10,6 +10,8 @@ from .models import Node, Inbound, Protocol, NodeState
 from .services import agent_client
 
 logger=logging.getLogger("primevpn.traffic")
+logger.setLevel(logging.INFO)
+logger.propagate=True
 app=FastAPI(title=settings.app_name,version=settings.version,docs_url="/docs",redoc_url="/redoc")
 _traffic_task=None
 _traffic_previous={}
@@ -21,8 +23,10 @@ async def _traffic_monitor():
         try:
             set_platform_context(db)
             nodes=db.query(Node).filter(Node.state.in_([NodeState.ready,NodeState.degraded])).all()
+            logger.info("VPN_TRAFFIC_MONITOR_START nodes=%s",len(nodes))
             for node in nodes:
                 inbounds=db.query(Inbound).filter(Inbound.node_id==node.id,Inbound.enabled.is_(True),Inbound.desired_state=="ACTIVE").all()
+                logger.info("VPN_TRAFFIC_NODE node=%s state=%s inbounds=%s",node.id,node.state,len(inbounds))
                 for inbound in inbounds:
                     if inbound.protocol not in {Protocol.wireguard,Protocol.amneziawg}:
                         continue
@@ -50,6 +54,7 @@ async def _traffic_monitor():
 async def start_traffic_monitor():
     global _traffic_task
     _traffic_task=asyncio.create_task(_traffic_monitor())
+    logger.info("VPN_TRAFFIC_MONITOR_TASK_CREATED")
 
 @app.on_event("shutdown")
 async def stop_traffic_monitor():
