@@ -24,6 +24,23 @@ def create_node(data:NodeIn,request:Request,admin:Admin=Depends(require_tenant_m
  n=Node(tenant_id=admin.tenant_id,name=data.name,address=data.address,agent_url=data.agent_url)
  db.add(n);db.flush();record(db,admin,request,"node.create","node",n.id);db.commit();db.refresh(n);return n
 
+@router.post("/install-token")
+def install_token(data:NodeIn,request:Request,admin:Admin=Depends(require_tenant_manager),db:Session=Depends(get_db)):
+ if not admin.tenant_id: raise HTTPException(400,"Tenant required")
+ if not settings.agent_verify_public_key: raise HTTPException(503,"Agent verification key is not configured")
+ n=Node(tenant_id=admin.tenant_id,name=data.name,address=data.address,agent_url=None,state=NodeState.authenticating)
+ db.add(n);db.flush()
+ raw,h=new_bootstrap_token()
+ task=ProvisioningTask(tenant_id=admin.tenant_id,node_id=n.id,idempotency_key="install:"+raw,state=NodeState.authenticating.value,bootstrap_token_hash=h,bootstrap_expires_at=datetime.now(timezone.utc)+timedelta(minutes=15))
+ db.add(task);db.flush()
+ record(db,admin,request,"node.install_token","node",n.id,details={"task_id":task.id})
+ db.commit()
+ from shlex import quote
+ backend=str(request.base_url).rstrip("/")
+ installer=backend+"/api/v1/provisioning/install.sh"
+ command=f"curl -fsSL {quote(installer)} | sudo bash -s -- {quote(backend)} {quote(task.id)} {quote(raw)}"
+ return {"node_id":n.id,"task_id":task.id,"bootstrap_token":raw,"expires_at":task.bootstrap_expires_at,"install_command":command,"installer_url":installer}
+
 @router.post("/auto-provision")
 async def auto_provision(data:AutoNodeIn,request:Request,admin:Admin=Depends(require_tenant_manager),db:Session=Depends(get_db)):
  if not admin.tenant_id: raise HTTPException(400,"Tenant required")
