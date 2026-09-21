@@ -69,7 +69,7 @@ download_file "$RAW_BASE/agent_security.py" /opt/primevpn-node-agent/agent_secur
 printf '%s\n' "$VERIFY_KEY" > /etc/primevpn/agent-public.key
 chmod 600 /etc/primevpn/agent-public.key
 cat > /etc/primevpn/agent.env <<EOF
-PRIMEVPN_AGENT_VERIFY_PUBLIC_KEY=$VERIFY_KEY
+PRIMEVPN_AGENT_VERIFY_PUBLIC_KEY_FILE=/etc/primevpn/agent-public.key
 PRIMEVPN_NODE_ID=$NODE_ID
 PORT=$PORT
 EOF
