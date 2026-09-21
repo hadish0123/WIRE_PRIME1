@@ -1,39 +1,38 @@
-from datetime import datetime,timezone,timedelta
-from fastapi import APIRouter,Depends,HTTPException,Request
+from datetime import datetime, timezone, timedelta
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import PlainTextResponse
-from pydantic import BaseModel,Field
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
-from ..db import get_db,set_platform_context
-from ..deps import current_admin,require_tenant_manager
-from ..models import Admin,Node,ProvisioningTask,NodeState
+from ..db import get_db, set_platform_context
+from ..deps import current_admin, require_tenant_manager
+from ..models import Admin, Node, ProvisioningTask, NodeState
 from ..services.reconcile import desired_node_state
-from ..security import new_bootstrap_token,hash_token,create_agent_token,decode_agent_token
+from ..security import new_bootstrap_token, hash_token, create_agent_token, decode_agent_token
 from ..config import settings
-router=APIRouter()\n@router.get("/install.sh",response_class=PlainTextResponse)
-def install_script():
- return INSTALL_SCRIPT
 
-INSTALL_SCRIPT=r"""#!/usr/bin/env bash
+router = APIRouter()
+
+INSTALL_SCRIPT = r"""#!/usr/bin/env bash
 set -euo pipefail
 BACKEND="${1:-}"
 TASK_ID="${2:-}"
 BOOTSTRAP="${3:-}"
 PUBLIC_HOST="${4:-}"
 if [ -z "$BACKEND" ] || [ -z "$TASK_ID" ] || [ -z "$BOOTSTRAP" ] || [ -z "$PUBLIC_HOST" ]; then
- echo "Usage: install.sh BACKEND_URL TASK_ID BOOTSTRAP_TOKEN PUBLIC_VPS_IP" >&2
- exit 2
+  echo "Usage: install.sh BACKEND_URL TASK_ID BOOTSTRAP_TOKEN PUBLIC_VPS_IP" >&2
+  exit 2
 fi
 export DEBIAN_FRONTEND=noninteractive
 if command -v apt-get >/dev/null 2>&1; then
- apt-get update -y
- apt-get install -y curl openssl python3 python3-venv iproute2 wireguard-tools openvpn
+  apt-get update -y
+  apt-get install -y curl openssl python3 python3-venv iproute2 wireguard-tools openvpn
 elif command -v dnf >/dev/null 2>&1; then
- dnf install -y curl openssl python3 python3-pip iproute wireguard-tools openvpn || true
+  dnf install -y curl openssl python3 python3-pip iproute wireguard-tools openvpn
 elif command -v yum >/dev/null 2>&1; then
- yum install -y curl openssl python3 python3-pip iproute wireguard-tools openvpn || true
+  yum install -y curl openssl python3 python3-pip iproute wireguard-tools openvpn
 else
- echo "Unsupported Linux distribution: apt-get/dnf/yum not found" >&2
- exit 10
+  echo "Unsupported Linux distribution: apt-get/dnf/yum not found" >&2
+  exit 10
 fi
 command -v python3 >/dev/null || { echo "python3 is required" >&2; exit 11; }
 command -v systemctl >/dev/null || { echo "systemd/systemctl is required" >&2; exit 12; }
@@ -41,11 +40,12 @@ EXCHANGE="$(curl -fsS --max-time 20 -X POST "$BACKEND/api/v1/provisioning/bootst
 NODE_ID="$(printf '%s' "$EXCHANGE" | python3 -c 'import json,sys; print(json.load(sys.stdin)["node_id"])')"
 AGENT_TOKEN="$(printf '%s' "$EXCHANGE" | python3 -c 'import json,sys; print(json.load(sys.stdin)["agent_token"])')"
 VERIFY_KEY="$(printf '%s' "$EXCHANGE" | python3 -c 'import json,sys; print(json.load(sys.stdin)["agent_verify_public_key"])')"
-HOST="$PUBLIC_HOST"
-[ -n "$HOST" ] || { echo "Could not determine VPS public address" >&2; exit 13; }
 PORT=""
 for CANDIDATE in 443 9443 10443 11443 12443; do
- if ! ss -ltnH 2>/dev/null | awk '{print $4}' | grep -qE "([.:])${CANDIDATE}$"; then PORT="$CANDIDATE"; break; fi
+  if ! ss -ltnH 2>/dev/null | awk '{print $4}' | grep -qE "([.:])${CANDIDATE}$"; then
+    PORT="$CANDIDATE"
+    break
+  fi
 done
 [ -n "$PORT" ] || { echo "No free Agent TCP port found" >&2; exit 14; }
 mkdir -p /opt/primevpn-node-agent /etc/primevpn
@@ -64,67 +64,12 @@ PRIMEVPN_NODE_ID=$NODE_ID
 PORT=$PORT
 EOF
 chmod 600 /etc/primevpn/agent.env
-if printf '%s' "$HOST" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+
-class BootstrapExchange(BaseModel):
- token:str=Field(min_length=30,max_length=256)
-
-@router.get("/{node_id}/desired-state")
-def desired(node_id:str,admin:Admin=Depends(current_admin),db:Session=Depends(get_db)):
- n=db.query(Node).filter(Node.id==node_id,Node.tenant_id==admin.tenant_id).first()
- if not n:raise HTTPException(404,"Node not found")
- return desired_node_state(db,n)
-
-@router.get("/{node_id}/tasks")
-def tasks(node_id:str,admin:Admin=Depends(current_admin),db:Session=Depends(get_db)):
- if not db.query(Node).filter(Node.id==node_id,Node.tenant_id==admin.tenant_id).first():raise HTTPException(404,"Node not found")
- return db.query(ProvisioningTask).filter(ProvisioningTask.node_id==node_id,ProvisioningTask.tenant_id==admin.tenant_id).order_by(ProvisioningTask.created_at.desc()).limit(100).all()
-
-@router.post("/{node_id}/bootstrap")
-def bootstrap(node_id:str,admin:Admin=Depends(require_tenant_manager),db:Session=Depends(get_db)):
- n=db.query(Node).filter(Node.id==node_id,Node.tenant_id==admin.tenant_id).first()
- if not n:raise HTTPException(404,"Node not found")
- raw,h=new_bootstrap_token()
- task=ProvisioningTask(tenant_id=admin.tenant_id,node_id=n.id,idempotency_key="bootstrap:"+raw,state=NodeState.authenticating.value,bootstrap_token_hash=h,bootstrap_expires_at=datetime.now(timezone.utc)+timedelta(minutes=15))
- db.add(task);n.state=NodeState.authenticating;db.commit()
- return {"task_id":task.id,"bootstrap_token":raw,"expires_at":task.bootstrap_expires_at}
-
-@router.post("/bootstrap/{task_id}/exchange")
-def exchange(task_id:str,body:BootstrapExchange,db:Session=Depends(get_db)):
- set_platform_context(db)
- task=db.query(ProvisioningTask).filter(ProvisioningTask.id==task_id).with_for_update().first()
- now=datetime.now(timezone.utc)
- if not task or not task.bootstrap_token_hash or not task.bootstrap_expires_at or task.bootstrap_expires_at<=now:raise HTTPException(401,"Bootstrap token expired")
- if hash_token(body.token)!=task.bootstrap_token_hash:raise HTTPException(401,"Invalid bootstrap token")
- node=db.query(Node).filter(Node.id==task.node_id,Node.tenant_id==task.tenant_id).first()
- if not node:raise HTTPException(401,"Invalid bootstrap binding")
- task.bootstrap_token_hash=None;task.bootstrap_expires_at=None;task.state=NodeState.syncing.value;node.state=NodeState.syncing;db.commit()
- return {"node_id":node.id,"tenant_id":node.tenant_id,"agent_token":create_agent_token(node.id,node.tenant_id,["read","write"]),"agent_verify_public_key":settings.agent_verify_public_key,"expires_in":600}
-
-
-class AgentRegistration(BaseModel):
- agent_url:str=Field(min_length=10,max_length=512)
- version:str|None=Field(default=None,max_length=40)
- capabilities:dict=Field(default_factory=dict)
-
-@router.post("/{node_id}/register")
-async def register_agent(node_id:str,body:AgentRegistration,request:Request,db:Session=Depends(get_db)):
- token=request.headers.get("Authorization","")
- if not token.lower().startswith("bearer "): raise HTTPException(401,"Agent token required")
- try: claims=decode_agent_token(token[7:].strip())
- except Exception: raise HTTPException(401,"Invalid agent token")
- if claims.get("type")!="node_access" or claims.get("sub")!=node_id: raise HTTPException(403,"Agent identity mismatch")
- node=db.query(Node).filter(Node.id==node_id,Node.tenant_id==claims.get("tenant_id")).first()
- if not node: raise HTTPException(404,"Node not found")
- node.agent_url=body.agent_url
- node.agent_version=body.version
- import json
- node.capabilities=json.dumps(body.capabilities or {},separators=(",",":"))
- node.state=NodeState.ready
- node.last_seen_at=datetime.now(timezone.utc)
- db.commit()
- return {"status":"READY","node_id":node.id}
-; then SAN="subjectAltName=IP:$HOST"; else SAN="subjectAltName=DNS:$HOST"; fi
-openssl req -x509 -newkey ed25519 -nodes -days 3650 -keyout /etc/primevpn/agent.key -out /etc/primevpn/agent.crt -subj "/CN=$HOST" -addext "$SAN" >/dev/null 2>&1
+if printf '%s' "$PUBLIC_HOST" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
+  SAN="subjectAltName=IP:$PUBLIC_HOST"
+else
+  SAN="subjectAltName=DNS:$PUBLIC_HOST"
+fi
+openssl req -x509 -newkey ed25519 -nodes -days 3650 -keyout /etc/primevpn/agent.key -out /etc/primevpn/agent.crt -subj "/CN=$PUBLIC_HOST" -addext "$SAN" >/dev/null 2>&1
 chmod 600 /etc/primevpn/agent.key
 cat > /etc/systemd/system/primevpn-node-agent.service <<EOF
 [Unit]
@@ -147,67 +92,72 @@ sleep 2
 curl -kfsS --max-time 5 "https://127.0.0.1:$PORT/healthz" >/dev/null
 if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q active; then ufw allow "$PORT/tcp" >/dev/null; fi
 if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then firewall-cmd --permanent --add-port="$PORT/tcp" >/dev/null; firewall-cmd --reload >/dev/null; fi
-AGENT_URL="https://$HOST:$PORT"
+AGENT_URL="https://$PUBLIC_HOST:$PORT"
 curl -kfsS --max-time 20 -X POST "$BACKEND/api/v1/provisioning/$NODE_ID/register" -H "Authorization: Bearer $AGENT_TOKEN" -H 'Content-Type: application/json' --data "{\"agent_url\":\"$AGENT_URL\",\"version\":\"100.0.0\",\"capabilities\":{}}" >/dev/null
 echo "PRIMEVPN Node installed successfully."
 echo "Node ID: $NODE_ID"
 echo "Agent: $AGENT_URL"
+"""
 
 class BootstrapExchange(BaseModel):
- token:str=Field(min_length=30,max_length=256)
+    token: str = Field(min_length=30, max_length=256)
+
+@router.get("/install.sh", response_class=PlainTextResponse)
+def install_script():
+    return INSTALL_SCRIPT
 
 @router.get("/{node_id}/desired-state")
-def desired(node_id:str,admin:Admin=Depends(current_admin),db:Session=Depends(get_db)):
- n=db.query(Node).filter(Node.id==node_id,Node.tenant_id==admin.tenant_id).first()
- if not n:raise HTTPException(404,"Node not found")
- return desired_node_state(db,n)
+def desired(node_id: str, admin: Admin = Depends(current_admin), db: Session = Depends(get_db)):
+    n = db.query(Node).filter(Node.id == node_id, Node.tenant_id == admin.tenant_id).first()
+    if not n: raise HTTPException(404, "Node not found")
+    return desired_node_state(db, n)
 
 @router.get("/{node_id}/tasks")
-def tasks(node_id:str,admin:Admin=Depends(current_admin),db:Session=Depends(get_db)):
- if not db.query(Node).filter(Node.id==node_id,Node.tenant_id==admin.tenant_id).first():raise HTTPException(404,"Node not found")
- return db.query(ProvisioningTask).filter(ProvisioningTask.node_id==node_id,ProvisioningTask.tenant_id==admin.tenant_id).order_by(ProvisioningTask.created_at.desc()).limit(100).all()
+def tasks(node_id: str, admin: Admin = Depends(current_admin), db: Session = Depends(get_db)):
+    if not db.query(Node).filter(Node.id == node_id, Node.tenant_id == admin.tenant_id).first():
+        raise HTTPException(404, "Node not found")
+    return db.query(ProvisioningTask).filter(ProvisioningTask.node_id == node_id, ProvisioningTask.tenant_id == admin.tenant_id).order_by(ProvisioningTask.created_at.desc()).limit(100).all()
 
 @router.post("/{node_id}/bootstrap")
-def bootstrap(node_id:str,admin:Admin=Depends(require_tenant_manager),db:Session=Depends(get_db)):
- n=db.query(Node).filter(Node.id==node_id,Node.tenant_id==admin.tenant_id).first()
- if not n:raise HTTPException(404,"Node not found")
- raw,h=new_bootstrap_token()
- task=ProvisioningTask(tenant_id=admin.tenant_id,node_id=n.id,idempotency_key="bootstrap:"+raw,state=NodeState.authenticating.value,bootstrap_token_hash=h,bootstrap_expires_at=datetime.now(timezone.utc)+timedelta(minutes=15))
- db.add(task);n.state=NodeState.authenticating;db.commit()
- return {"task_id":task.id,"bootstrap_token":raw,"expires_at":task.bootstrap_expires_at}
+def bootstrap(node_id: str, admin: Admin = Depends(require_tenant_manager), db: Session = Depends(get_db)):
+    n = db.query(Node).filter(Node.id == node_id, Node.tenant_id == admin.tenant_id).first()
+    if not n: raise HTTPException(404, "Node not found")
+    raw, h = new_bootstrap_token()
+    task = ProvisioningTask(tenant_id=admin.tenant_id, node_id=n.id, idempotency_key="bootstrap:" + raw, state=NodeState.authenticating.value, bootstrap_token_hash=h, bootstrap_expires_at=datetime.now(timezone.utc) + timedelta(minutes=15))
+    db.add(task); n.state = NodeState.authenticating; db.commit()
+    return {"task_id": task.id, "bootstrap_token": raw, "expires_at": task.bootstrap_expires_at}
 
 @router.post("/bootstrap/{task_id}/exchange")
-def exchange(task_id:str,body:BootstrapExchange,db:Session=Depends(get_db)):
- set_platform_context(db)
- task=db.query(ProvisioningTask).filter(ProvisioningTask.id==task_id).with_for_update().first()
- now=datetime.now(timezone.utc)
- if not task or not task.bootstrap_token_hash or not task.bootstrap_expires_at or task.bootstrap_expires_at<=now:raise HTTPException(401,"Bootstrap token expired")
- if hash_token(body.token)!=task.bootstrap_token_hash:raise HTTPException(401,"Invalid bootstrap token")
- node=db.query(Node).filter(Node.id==task.node_id,Node.tenant_id==task.tenant_id).first()
- if not node:raise HTTPException(401,"Invalid bootstrap binding")
- task.bootstrap_token_hash=None;task.bootstrap_expires_at=None;task.state=NodeState.syncing.value;node.state=NodeState.syncing;db.commit()
- return {"node_id":node.id,"tenant_id":node.tenant_id,"agent_token":create_agent_token(node.id,node.tenant_id,["read","write"]),"agent_verify_public_key":__import__("app.config",fromlist=["settings"]).settings.agent_verify_public_key,"expires_in":600}
-
+def exchange(task_id: str, body: BootstrapExchange, db: Session = Depends(get_db)):
+    set_platform_context(db)
+    task = db.query(ProvisioningTask).filter(ProvisioningTask.id == task_id).with_for_update().first()
+    now = datetime.now(timezone.utc)
+    if not task or not task.bootstrap_token_hash or not task.bootstrap_expires_at or task.bootstrap_expires_at <= now: raise HTTPException(401, "Bootstrap token expired")
+    if hash_token(body.token) != task.bootstrap_token_hash: raise HTTPException(401, "Invalid bootstrap token")
+    node = db.query(Node).filter(Node.id == task.node_id, Node.tenant_id == task.tenant_id).first()
+    if not node: raise HTTPException(401, "Invalid bootstrap binding")
+    task.bootstrap_token_hash = None; task.bootstrap_expires_at = None; task.state = NodeState.syncing.value; node.state = NodeState.syncing; db.commit()
+    return {"node_id": node.id, "tenant_id": node.tenant_id, "agent_token": create_agent_token(node.id, node.tenant_id, ["read", "write"]), "agent_verify_public_key": settings.agent_verify_public_key, "expires_in": 600}
 
 class AgentRegistration(BaseModel):
- agent_url:str=Field(min_length=10,max_length=512)
- version:str|None=Field(default=None,max_length=40)
- capabilities:dict=Field(default_factory=dict)
+    agent_url: str = Field(min_length=10, max_length=512)
+    version: str | None = Field(default=None, max_length=40)
+    capabilities: dict = Field(default_factory=dict)
 
 @router.post("/{node_id}/register")
-async def register_agent(node_id:str,body:AgentRegistration,request:Request,db:Session=Depends(get_db)):
- token=request.headers.get("Authorization","")
- if not token.lower().startswith("bearer "): raise HTTPException(401,"Agent token required")
- try: claims=decode_agent_token(token[7:].strip())
- except Exception: raise HTTPException(401,"Invalid agent token")
- if claims.get("type")!="node_access" or claims.get("sub")!=node_id: raise HTTPException(403,"Agent identity mismatch")
- node=db.query(Node).filter(Node.id==node_id,Node.tenant_id==claims.get("tenant_id")).first()
- if not node: raise HTTPException(404,"Node not found")
- node.agent_url=body.agent_url
- node.agent_version=body.version
- import json
- node.capabilities=json.dumps(body.capabilities or {},separators=(",",":"))
- node.state=NodeState.ready
- node.last_seen_at=datetime.now(timezone.utc)
- db.commit()
- return {"status":"READY","node_id":node.id}
+async def register_agent(node_id: str, body: AgentRegistration, request: Request, db: Session = Depends(get_db)):
+    token = request.headers.get("Authorization", "")
+    if not token.lower().startswith("bearer "): raise HTTPException(401, "Agent token required")
+    try: claims = decode_agent_token(token[7:].strip())
+    except Exception: raise HTTPException(401, "Invalid agent token")
+    if claims.get("type") != "node_access" or claims.get("sub") != node_id: raise HTTPException(403, "Agent identity mismatch")
+    node = db.query(Node).filter(Node.id == node_id, Node.tenant_id == claims.get("tenant_id")).first()
+    if not node: raise HTTPException(404, "Node not found")
+    import json
+    node.agent_url = body.agent_url
+    node.agent_version = body.version
+    node.capabilities = json.dumps(body.capabilities or {}, separators=(",", ":"))
+    node.state = NodeState.ready
+    node.last_seen_at = datetime.now(timezone.utc)
+    db.commit()
+    return {"status": "READY", "node_id": node.id}
