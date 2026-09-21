@@ -3,7 +3,7 @@ from datetime import datetime,timezone
 from fastapi import FastAPI,Header,HTTPException
 from pydantic import BaseModel,Field
 from agent_security import verify_control_token,require_scope
-VERSION="100.0.0" # Railway healthcheck rollout
+VERSION="100.0.2" # VPN firewall and listener verification
 
 app=FastAPI(title="PRIMEVPN Node Agent",version=VERSION)
 class ApplyConfig(BaseModel):
@@ -83,6 +83,21 @@ def apply(data:ApplyConfig,x_agent_token:str|None=Header(default=None)):
     subprocess.run([tool,"up",path],capture_output=True,text=True,timeout=20,check=True)
    if data.protocol=="wireguard":
     if shutil.which("sysctl"): subprocess.run(["sysctl","-w","net.ipv4.ip_forward=1"],capture_output=True,text=True,timeout=10,check=True)
+    port_match=re.search(r"(?m)^ListenPort\\s*=\\s*(\\d+)",data.config)
+    if not port_match: raise RuntimeError("WireGuard ListenPort is missing")
+    listen_port=int(port_match.group(1))
+    if shutil.which("iptables"):
+     check=subprocess.run(["iptables","-C","INPUT","-p","udp","--dport",str(listen_port),"-j","ACCEPT"],capture_output=True,text=True,timeout=10)
+     if check.returncode:
+      subprocess.run(["iptables","-I","INPUT","-p","udp","--dport",str(listen_port),"-j","ACCEPT"],capture_output=True,text=True,timeout=10,check=True)
+    if shutil.which("ip6tables"):
+     check=subprocess.run(["ip6tables","-C","INPUT","-p","udp","--dport",str(listen_port),"-j","ACCEPT"],capture_output=True,text=True,timeout=10)
+     if check.returncode:
+      subprocess.run(["ip6tables","-I","INPUT","-p","udp","--dport",str(listen_port),"-j","ACCEPT"],capture_output=True,text=True,timeout=10,check=True)
+    if shutil.which("netfilter-persistent"):
+     subprocess.run(["netfilter-persistent","save"],capture_output=True,text=True,timeout=15)
+    live=subprocess.run(["wg","show",name,"listen-port"],capture_output=True,text=True,timeout=10,check=True).stdout.strip()
+    if live != str(listen_port): raise RuntimeError(f"WireGuard listener mismatch: configured={listen_port} live={live}")
     if shutil.which("iptables"):
      out=subprocess.run(["ip","route","show","default"],capture_output=True,text=True,timeout=10,check=True).stdout.split()
      if out:
