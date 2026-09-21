@@ -28,11 +28,11 @@ fi
 export DEBIAN_FRONTEND=noninteractive
 if command -v apt-get >/dev/null 2>&1; then
   apt-get update -y
-  apt-get install -y curl openssl python3 python3-venv iproute2 wireguard-tools openvpn
+  apt-get install -y curl openssl python3 python3-venv iproute2 iptables wireguard-tools openvpn
 elif command -v dnf >/dev/null 2>&1; then
-  dnf install -y curl openssl python3 python3-pip iproute wireguard-tools openvpn
+  dnf install -y curl openssl python3 python3-pip iproute iptables wireguard-tools openvpn
 elif command -v yum >/dev/null 2>&1; then
-  yum install -y curl openssl python3 python3-pip iproute wireguard-tools openvpn
+  yum install -y curl openssl python3 python3-pip iproute iptables wireguard-tools openvpn
 else
   echo "Unsupported Linux distribution: apt-get/dnf/yum not found" >&2
   exit 10
