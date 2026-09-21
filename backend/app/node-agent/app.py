@@ -69,9 +69,14 @@ def apply(data:ApplyConfig,x_agent_token:str|None=Header(default=None)):
     try:
      stripped=subprocess.run(["wg-quick","strip",path],capture_output=True,text=True,timeout=20,check=True)
      subprocess.run(["wg","syncconf",name,"/dev/stdin"],input=stripped.stdout,capture_output=True,text=True,timeout=20,check=True)
-    except subprocess.CalledProcessError:
-     subprocess.run([tool,"down",path],capture_output=True,text=True,timeout=20)
-     subprocess.run([tool,"up",path],capture_output=True,text=True,timeout=20,check=True)
+    except subprocess.CalledProcessError as e:
+     detail=e.stderr.strip() or e.stdout.strip() or str(e)
+     down=subprocess.run([tool,"down",path],capture_output=True,text=True,timeout=20)
+     try:
+      subprocess.run([tool,"up",path],capture_output=True,text=True,timeout=20,check=True)
+     except subprocess.CalledProcessError as up_error:
+      up_detail=up_error.stderr.strip() or up_error.stdout.strip() or str(up_error)
+      raise RuntimeError(f"WireGuard syncconf failed: {detail}; wg-quick up failed: {up_detail}") from up_error
    else:
     if os.path.exists(f"/sys/class/net/{name}"):
      subprocess.run([tool,"down",path],capture_output=True,text=True,timeout=20)
