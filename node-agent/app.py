@@ -20,6 +20,26 @@ def auth(token,scope="read"):
 
  raise HTTPException(401,"Agent authentication failed")
 def caps():return {"wireguard":shutil.which("wg") is not None,"amneziawg":shutil.which("awg") is not None,"openvpn":shutil.which("openvpn") is not None}
+def allow_input_port(port,protocol):
+ if not port or not str(port).isdigit(): return
+ port=str(port)
+ if shutil.which("iptables"):
+  proto="udp" if protocol in {"wireguard","amneziawg"} else "tcp"
+  check=subprocess.run(["iptables","-C","INPUT","-p",proto,"--dport",port,"-j","ACCEPT"],capture_output=True,text=True,timeout=10)
+  if check.returncode:
+   subprocess.run(["iptables","-I","INPUT","-p",proto,"--dport",port,"-j","ACCEPT"],capture_output=True,text=True,timeout=10,check=True)
+ if shutil.which("ufw"):
+  status=subprocess.run(["ufw","status"],capture_output=True,text=True,timeout=10)
+  if "Status: active" in status.stdout:
+   subprocess.run(["ufw","allow",f"{port}/{'udp' if protocol in {'wireguard','amneziawg'} else 'tcp'}"],capture_output=True,text=True,timeout=10,check=True)
+ if shutil.which("firewall-cmd"):
+  state=subprocess.run(["firewall-cmd","--state"],capture_output=True,text=True,timeout=10)
+  if state.returncode==0:
+   proto="udp" if protocol in {"wireguard","amneziawg"} else "tcp"
+   subprocess.run(["firewall-cmd","--permanent","--add-port",f"{port}/{proto}"],capture_output=True,text=True,timeout=10,check=True)
+   subprocess.run(["firewall-cmd","--reload"],capture_output=True,text=True,timeout=10,check=True)
+ if shutil.which("netfilter-persistent"):
+  subprocess.run(["netfilter-persistent","save"],capture_output=True,text=True,timeout=20)
 def validate_config(data):
  safe_interface(data.interface)
  if data.protocol not in {"wireguard","amneziawg","openvpn"} or "\x00" in data.config:raise HTTPException(400,"Invalid configuration")
@@ -107,6 +127,7 @@ def apply(data:ApplyConfig,x_agent_token:str|None=Header(default=None)):
         port_match=re.search(r"(?m)^ListenPort\s*=\s*(\d+)",data.config)
         if port_match:
          listen_port=port_match.group(1)
+         allow_input_port(listen_port,"wireguard")
          if shutil.which("ufw") and "active" in subprocess.run(["ufw","status"],capture_output=True,text=True,timeout=10).stdout.lower():
           subprocess.run(["ufw","allow",f"{listen_port}/udp"],capture_output=True,text=True,timeout=10,check=True)
          if shutil.which("firewall-cmd") and subprocess.run(["firewall-cmd","--state"],capture_output=True,text=True,timeout=10).returncode==0:
@@ -116,7 +137,14 @@ def apply(data:ApplyConfig,x_agent_token:str|None=Header(default=None)):
    if not shutil.which("systemctl"):raise RuntimeError("systemctl unavailable")
    server_dir="/etc/openvpn/server";os.makedirs(server_dir,mode=0o700,exist_ok=True)
    server_conf=f"{server_dir}/{name}.conf";shutil.copy2(path,server_conf);os.chmod(server_conf,0o600)
-   p=subprocess.run(["systemctl","reload-or-restart",f"openvpn-server@{name}"],capture_output=True,text=True,timeout=30)
+   proto_match=re.search(r"(?m)^proto\\s+(udp|tcp)(?:-server)?\\s*$",data.config)
+   port_match=re.search(r"(?m)^port\\s+(\\d+)\\s*$",data.config)
+   if port_match:
+    allow_input_port(port_match.group(1),"openvpn")
+   subprocess.run(["systemctl","daemon-reload"],capture_output=True,text=True,timeout=10)
+   p=subprocess.run(["systemctl","enable",f"openvpn-server@{name}"],capture_output=True,text=True,timeout=20)
+   if p.returncode:raise RuntimeError(p.stderr.strip() or "OpenVPN enable failed")
+   p=subprocess.run(["systemctl","restart",f"openvpn-server@{name}"],capture_output=True,text=True,timeout=30)
    if p.returncode:raise RuntimeError(p.stderr.strip() or "OpenVPN restart failed")
   return {"applied":True,"protocol":data.protocol,"interface":data.interface}
  except HTTPException: raise
