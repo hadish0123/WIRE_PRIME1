@@ -59,7 +59,8 @@ NODE_ID="$(printf '%s' "$EXCHANGE" | python3 -c 'import json,sys; print(json.loa
 AGENT_TOKEN="$(printf '%s' "$EXCHANGE" | python3 -c 'import json,sys; print(json.load(sys.stdin)["agent_token"])')"
 VERIFY_KEY="$(printf '%s' "$EXCHANGE" | python3 -c 'import json,sys; print(json.load(sys.stdin)["agent_verify_public_key"])')"
 PORT=""
-for CANDIDATE in 443 9443 10443 11443 12443; do
+# Keep 443 available for VPN traffic. The Agent uses a dedicated TCP control port.
+for CANDIDATE in 9443 10443 11443 12443 443; do
   if ! ss -ltnH 2>/dev/null | awk '{print $4}' | grep -qE "([.:])${CANDIDATE}$"; then
     PORT="$CANDIDATE"
     break
