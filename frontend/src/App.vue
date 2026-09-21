@@ -147,7 +147,12 @@ async function createInstallToken(){
   if(!installCommand.value)throw new Error("سرور دستور نصب را برنگرداند");
   modal.value="node-install";
  }catch(e){notice.value=e instanceof Error?e.message:"ساخت توکن نصب ناموفق"}finally{loading.value=false}
-}\nasync function copyInstallCommand(){\n const command=installArtifact.value?.install_command||installNodeInfo.value?.install_command||installCommand.value;\n if(!command){notice.value="دستور نصب هنوز ساخته نشده است";return}\n try{await navigator.clipboard.writeText(command);notice.value="دستور نصب کپی شد"}catch(e){notice.value="کپی دستور ناموفق بود؛ دستور را دستی انتخاب و کپی کن"}\n}
+}
+async function copyInstallCommand(){
+ const command=installArtifact.value?.install_command||installNodeInfo.value?.install_command||installCommand.value;
+ if(!command){notice.value="دستور نصب هنوز ساخته نشده است";return}
+ try{await navigator.clipboard.writeText(command);notice.value="دستور نصب کپی شد"}catch(e){notice.value="کپی دستور ناموفق بود؛ دستور را دستی انتخاب و کپی کن"}
+}
 async function provision(id:string){try{const r=await nodes.provision(id);notice.value=r.bootstrap_token?"Bootstrap token ساخته شد؛ برای نصب Agent استفاده کن":"Provisioning ثبت شد";if(r.bootstrap_token)notice.value=`Bootstrap Token: ${r.bootstrap_token}`;modal.value=null;await load()}catch(e){notice.value=e instanceof Error?e.message:"Provisioning ناموفق"}}
 async function deleteNode(n:any){if(me.value.role==="tenant_operator")return;if(!window.confirm(`نود "${n.name}" حذف شود؟ این کار فقط نودی را حذف می‌کند که Inbound نداشته باشد.`))return;await act(()=>nodes.remove(n.id),"نود حذف شد")}
 function goSection(id:string){section.value=id;drawer.value=false;if(id==="traffic")loadTrafficView()}
