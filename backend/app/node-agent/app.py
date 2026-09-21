@@ -66,12 +66,33 @@ def apply(data:ApplyConfig,x_agent_token:str|None=Header(default=None)):
    tool="wg-quick" if data.protocol=="wireguard" else "awg-quick"
    if not shutil.which(tool):raise RuntimeError(f"{tool} unavailable")
    if data.protocol=="wireguard" and shutil.which("wg") and shutil.which("wg-quick") and os.path.exists(f"/sys/class/net/{name}"):
-    stripped=subprocess.run(["wg-quick","strip",path],capture_output=True,text=True,timeout=20,check=True)
-    subprocess.run(["wg","syncconf",name,"/dev/stdin"],input=stripped.stdout,capture_output=True,text=True,timeout=20,check=True)
+    try:
+     stripped=subprocess.run(["wg-quick","strip",path],capture_output=True,text=True,timeout=20,check=True)
+     subprocess.run(["wg","syncconf",name,"/dev/stdin"],input=stripped.stdout,capture_output=True,text=True,timeout=20,check=True)
+    except subprocess.CalledProcessError:
+     subprocess.run([tool,"down",path],capture_output=True,text=True,timeout=20)
+     subprocess.run([tool,"up",path],capture_output=True,text=True,timeout=20,check=True)
    else:
     if os.path.exists(f"/sys/class/net/{name}"):
      subprocess.run([tool,"down",path],capture_output=True,text=True,timeout=20)
     subprocess.run([tool,"up",path],capture_output=True,text=True,timeout=20,check=True)
+   if data.protocol=="wireguard":
+    if shutil.which("sysctl"): subprocess.run(["sysctl","-w","net.ipv4.ip_forward=1"],capture_output=True,text=True,timeout=10,check=True)
+    if shutil.which("iptables"):
+     out=subprocess.run(["ip","route","show","default"],capture_output=True,text=True,timeout=10,check=True).stdout.split()
+     if out:
+      wan=out[out.index("dev")+1] if "dev" in out else ""
+      if wan:
+       import re as _re
+       m=_re.search(r"(?m)^Address\s*=\s*([^\n]+)",data.config)
+       cidr=m.group(1).strip() if m else ""
+       if "/" in cidr:
+        net=__import__("ipaddress").ip_interface(cidr).network
+        subprocess.run(["iptables","-A","FORWARD","-i",name,"-j","ACCEPT"],capture_output=True,text=True,timeout=10)
+        subprocess.run(["iptables","-A","FORWARD","-o",name,"-m","conntrack","--ctstate","RELATED,ESTABLISHED","-j","ACCEPT"],capture_output=True,text=True,timeout=10)
+        check=subprocess.run(["iptables","-t","nat","-C","POSTROUTING","-s",str(net),"-o",wan,"-j","MASQUERADE"],capture_output=True,text=True,timeout=10)
+        if check.returncode:
+         subprocess.run(["iptables","-t","nat","-A","POSTROUTING","-s",str(net),"-o",wan,"-j","MASQUERADE"],capture_output=True,text=True,timeout=10,check=True)
   elif data.protocol=="openvpn":
    if not shutil.which("systemctl"):raise RuntimeError("systemctl unavailable")
    server_dir="/etc/openvpn/server";os.makedirs(server_dir,mode=0o700,exist_ok=True)
