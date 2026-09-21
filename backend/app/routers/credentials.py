@@ -90,7 +90,11 @@ def issue(client_id:str,admin:Admin=Depends(require_tenant_manager),db:Session=D
    if not dev.assigned_address: continue
    peers += ["","[Peer]",f"PublicKey = {cred_row.public_identifier}",f"AllowedIPs = {dev.assigned_address}"]
   full_config=rendered["config"].rstrip()+"\n"+"\n".join(peers)+"\n"
-  apply_agent(node,rendered["protocol"],rendered["interface"],full_config,rendered.get("files"))
+  try:
+   apply_agent(node,rendered["protocol"],rendered["interface"],full_config,rendered.get("files"))
+  except Exception as e:
+   db.rollback()
+   raise HTTPException(502,f"WireGuard apply failed: {e}")
  artifact=create_artifact(db,c,inbound.protocol,payload)
  db.commit()
  return {"credential_id":cred.id,"device_id":device.id,"artifact_id":artifact.id,"public_identifier":identifier,"fingerprint":fp,"expires_at":artifact.expires_at}
