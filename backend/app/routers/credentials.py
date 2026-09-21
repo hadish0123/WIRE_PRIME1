@@ -3,7 +3,7 @@ from fastapi import APIRouter,Depends,HTTPException
 from sqlalchemy.orm import Session
 from ..db import get_db
 from ..deps import current_admin,require_tenant_manager,can_access_client
-from ..models import Admin,Client,Device,Inbound,InboundOpenVPN,InboundWireGuard,ClientCredential,Protocol,Node,Quota,TrafficUsage
+from ..models import Admin,Client,Device,Inbound,InboundOpenVPN,InboundWireGuard,ClientCredential,ConfigArtifact,Protocol,Node,Quota,TrafficUsage
 from ..security import encrypt_secret,decrypt_secret
 from ..services.credentials import wg_keypair,openvpn_ca,openvpn_server,openvpn_client,openvpn_tls_crypt_key,fingerprint
 from ..services.config_artifacts import create_artifact
@@ -46,6 +46,31 @@ def issue(client_id:str,admin:Admin=Depends(require_tenant_manager),db:Session=D
  if not inbound:raise HTTPException(404,"Inbound not found")
  node=db.query(Node).filter(Node.id==inbound.node_id,Node.tenant_id==admin.tenant_id).first()
  if not node:raise HTTPException(404,"Node not found")
+ # Download is idempotent: do not create another device/peer when the user
+ # requests the same client's config again.
+ existing_cred=db.query(ClientCredential).filter(
+  ClientCredential.client_id==c.id,
+  ClientCredential.revoked_at.is_(None)
+ ).order_by(ClientCredential.created_at.desc()).first()
+ if existing_cred:
+  existing_artifact=db.query(ConfigArtifact).filter(
+   ConfigArtifact.client_id==c.id,
+   ConfigArtifact.tenant_id==admin.tenant_id,
+   ConfigArtifact.protocol==inbound.protocol
+  ).order_by(ConfigArtifact.expires_at.desc()).first()
+  if existing_artifact:
+   from ..services.config_artifacts import read_artifact
+   try:
+    read_artifact(existing_artifact)
+    return {"credential_id":existing_cred.id,"device_id":existing_cred.device_id,
+            "artifact_id":existing_artifact.id,"public_identifier":existing_cred.public_identifier,
+            "fingerprint":existing_cred.fingerprint,"expires_at":existing_artifact.expires_at}
+   except ValueError:
+    payload=decrypt_secret(existing_artifact.encrypted_payload)
+    refreshed=create_artifact(db,c,inbound.protocol,payload)
+    return {"credential_id":existing_cred.id,"device_id":existing_cred.device_id,
+            "artifact_id":refreshed.id,"public_identifier":existing_cred.public_identifier,
+            "fingerprint":existing_cred.fingerprint,"expires_at":refreshed.expires_at}
  device=Device(tenant_id=c.tenant_id,client_id=c.id,fingerprint=fingerprint(c.id+str(__import__("time").time_ns())))
  if inbound.protocol in {Protocol.wireguard,Protocol.amneziawg}:
   server_ip=ipaddress.ip_interface(inbound.address).ip
