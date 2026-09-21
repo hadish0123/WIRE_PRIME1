@@ -26,6 +26,9 @@ def decode_mfa_challenge(token):
 def new_bootstrap_token():
  raw=secrets.token_urlsafe(32);return raw,hashlib.sha256(raw.encode()).hexdigest()
 def hash_token(token):return hashlib.sha256(token.encode()).hexdigest()
+def decode_agent_token(token):
+ if not settings.agent_verify_public_key: raise jwt.InvalidTokenError("Agent verification key is not configured")
+ return jwt.decode(token,settings.agent_verify_public_key,algorithms=["EdDSA"],audience="primevpn-agent",issuer="primevpn-control",options={"require":["sub","tenant_id","type","exp","iat","jti"]})
 def create_agent_token(node_id,tenant_id,scopes):
  if not settings.agent_signing_private_key:raise RuntimeError("Agent signing key is not configured")
  now=datetime.now(timezone.utc);exp=now+timedelta(minutes=settings.agent_access_minutes)
