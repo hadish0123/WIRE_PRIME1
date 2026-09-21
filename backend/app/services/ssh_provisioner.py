@@ -40,7 +40,7 @@ curl -fsSL {_q(RAW_BASE+"/agent_security.py")} -o /opt/primevpn-node-agent/agent
 
 PORT=""
 for CANDIDATE in 443 9443 10443 11443 12443; do
-  if ! ss -ltnH 2>/dev/null | awk '{print $4}' | grep -qE "([.:])$CANDIDATE$"; then
+  if ! ss -ltnH 2>/dev/null | awk '{{print $4}}' | grep -qE "([.:])$CANDIDATE$"; then
     PORT="$CANDIDATE"
     break
   fi
