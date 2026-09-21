@@ -38,7 +38,7 @@ def install_token(data:NodeIn,request:Request,admin:Admin=Depends(require_tenant
  from shlex import quote
  backend=str(request.base_url).rstrip("/")
  installer=backend+"/api/v1/provisioning/install.sh"
- command=f"curl -fsSL {quote(installer)} | sudo bash -s -- {quote(backend)} {quote(task.id)} {quote(raw)}"
+ command=f"curl -fsSL {quote(installer)} | sudo bash -s -- {quote(backend)} {quote(task.id)} {quote(raw)} {quote(data.address)}"
  return {"node_id":n.id,"task_id":task.id,"bootstrap_token":raw,"expires_at":task.bootstrap_expires_at,"install_command":command,"installer_url":installer}
 
 @router.post("/auto-provision")
