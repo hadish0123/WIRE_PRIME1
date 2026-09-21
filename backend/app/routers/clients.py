@@ -98,14 +98,47 @@ def create_client(data:ClientIn,request:Request,admin:Admin=Depends(require_tena
  expires=_normalize_expiry(data.expires_at)
  if expires and expires<=datetime.now(timezone.utc):raise HTTPException(422,"Client expiry must be in the future")
  _validate_address(inbound,data.assigned_address)
- if db.query(Client).filter(Client.inbound_id==inbound.id,Client.assigned_address==data.assigned_address,Client.tenant_id==inbound.tenant_id).first():raise HTTPException(409,"Assigned address already in use")
+ assigned_address=data.assigned_address
+ if db.query(Client).filter(Client.inbound_id==inbound.id,Client.assigned_address==assigned_address,Client.tenant_id==inbound.tenant_id).first():
+  network=ipaddress.ip_network(inbound.network,strict=False)
+  prefix=ipaddress.ip_interface(assigned_address).network.prefixlen
+  used={ipaddress.ip_interface(v.assigned_address).ip for v in db.query(Client).filter(Client.inbound_id==inbound.id,Client.tenant_id==inbound.tenant_id).all()}
+  for candidate in network.hosts():
+   if candidate not in used:
+    assigned_address=f"{candidate}/{prefix}"
+    break
+  else: raise HTTPException(409,"No free client address remains in this inbound")
+ if db.query(Client).filter(Client.inbound_id==inbound.id,Client.assigned_address==assigned_address,Client.tenant_id==inbound.tenant_id).first():raise HTTPException(409,"Assigned address already in use")
  if db.query(Client).filter(Client.inbound_id==inbound.id,Client.name==data.name,Client.tenant_id==inbound.tenant_id).first():raise HTTPException(409,"Client name already exists on this inbound")
- c=Client(tenant_id=inbound.tenant_id,inbound_id=data.inbound_id,created_by_admin_id=admin.id,name=data.name,assigned_address=data.assigned_address,expires_at=expires)
+ c=Client(tenant_id=inbound.tenant_id,inbound_id=data.inbound_id,created_by_admin_id=admin.id,name=data.name,assigned_address=assigned_address,expires_at=expires)
  db.add(c);db.flush()
  if any(v is not None for v in (data.total_bytes,data.daily_bytes,data.monthly_bytes,data.max_devices)) or expires:
   q=Quota(tenant_id=c.tenant_id,client_id=c.id,total_bytes=data.total_bytes,daily_bytes=data.daily_bytes,monthly_bytes=data.monthly_bytes,max_devices=data.max_devices,warning_ratio=data.warning_ratio,expires_at=expires)
   db.add(q)
  record(db,admin,request,"client.create","client",c.id);db.commit();db.refresh(c);return c
+
+@router.delete("/{client_id}")
+def delete_client(client_id:str,request:Request,admin:Admin=Depends(require_tenant_manager),db:Session=Depends(get_db)):
+ c=db.query(Client).filter(Client.id==client_id,Client.tenant_id==admin.tenant_id).first()
+ if not c:raise HTTPException(404,"Client not found")
+ inbound=db.query(Inbound).filter(Inbound.id==c.inbound_id,Inbound.tenant_id==admin.tenant_id).first()
+ node=db.query(Node).filter(Node.id==inbound.node_id,Node.tenant_id==admin.tenant_id).first() if inbound else None
+ creds=db.query(ClientCredential).filter(ClientCredential.client_id==c.id,ClientCredential.revoked_at.is_(None)).order_by(ClientCredential.created_at.desc()).all()
+ if inbound and node and node.agent_url and creds:
+  try:
+   if inbound.protocol in {Protocol.wireguard,Protocol.amneziawg}:
+    for cred in creds: revoke_wireguard_peer(node,inbound.interface,cred.public_identifier)
+   elif inbound.protocol==Protocol.openvpn:
+    ov=db.query(InboundOpenVPN).filter(InboundOpenVPN.inbound_id==inbound.id).first()
+    if ov and ov.ca_key_encrypted and ov.ca_pem:
+     for cred in creds:
+      if not cred.encrypted_private_material: continue
+      material=json.loads(decrypt_secret(cred.encrypted_private_material))
+      ov.crl_pem=revoke_certificate(ov.crl_pem,material["certificate"],decrypt_secret(ov.ca_key_encrypted),ov.ca_pem)
+     deploy_openvpn_crl(node,inbound.interface,ov.crl_pem)
+  except Exception as e:raise HTTPException(502,f"Node client removal failed: {e}")
+ record(db,admin,request,"client.delete","client",c.id);db.delete(c);db.commit()
+ return {"status":"deleted","client_id":client_id}
 
 @router.patch("/{client_id}",response_model=ClientOut)
 def update_client(client_id:str,data:ClientUpdateIn,request:Request,admin:Admin=Depends(require_tenant_manager),db:Session=Depends(get_db)):
