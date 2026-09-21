@@ -93,11 +93,25 @@ def apply(data:ApplyConfig,x_agent_token:str|None=Header(default=None)):
        cidr=m.group(1).strip() if m else ""
        if "/" in cidr:
         net=__import__("ipaddress").ip_interface(cidr).network
-        subprocess.run(["iptables","-A","FORWARD","-i",name,"-j","ACCEPT"],capture_output=True,text=True,timeout=10)
-        subprocess.run(["iptables","-A","FORWARD","-o",name,"-m","conntrack","--ctstate","RELATED,ESTABLISHED","-j","ACCEPT"],capture_output=True,text=True,timeout=10)
+        rules=[
+         ["iptables","-C","FORWARD","-i",name,"-j","ACCEPT"],
+         ["iptables","-C","FORWARD","-o",name,"-m","conntrack","--ctstate","RELATED,ESTABLISHED","-j","ACCEPT"],
+        ]
+        for rule in rules:
+         check=subprocess.run(rule,capture_output=True,text=True,timeout=10)
+         if check.returncode:
+          subprocess.run([rule[0],"-A"]+rule[2:],capture_output=True,text=True,timeout=10,check=True)
         check=subprocess.run(["iptables","-t","nat","-C","POSTROUTING","-s",str(net),"-o",wan,"-j","MASQUERADE"],capture_output=True,text=True,timeout=10)
         if check.returncode:
          subprocess.run(["iptables","-t","nat","-A","POSTROUTING","-s",str(net),"-o",wan,"-j","MASQUERADE"],capture_output=True,text=True,timeout=10,check=True)
+        port_match=re.search(r"(?m)^ListenPort\s*=\s*(\d+)",data.config)
+        if port_match:
+         listen_port=port_match.group(1)
+         if shutil.which("ufw") and "active" in subprocess.run(["ufw","status"],capture_output=True,text=True,timeout=10).stdout.lower():
+          subprocess.run(["ufw","allow",f"{listen_port}/udp"],capture_output=True,text=True,timeout=10,check=True)
+         if shutil.which("firewall-cmd") and subprocess.run(["firewall-cmd","--state"],capture_output=True,text=True,timeout=10).returncode==0:
+          subprocess.run(["firewall-cmd","--permanent","--add-port",f"{listen_port}/udp"],capture_output=True,text=True,timeout=10,check=True)
+          subprocess.run(["firewall-cmd","--reload"],capture_output=True,text=True,timeout=10,check=True)
   elif data.protocol=="openvpn":
    if not shutil.which("systemctl"):raise RuntimeError("systemctl unavailable")
    server_dir="/etc/openvpn/server";os.makedirs(server_dir,mode=0o700,exist_ok=True)
