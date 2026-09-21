@@ -1,6 +1,7 @@
 from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import PlainTextResponse
+from pathlib import Path
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from ..db import get_db, set_platform_context
@@ -53,40 +54,13 @@ done
 mkdir -p /opt/primevpn-node-agent /etc/primevpn
 python3 -m venv /opt/primevpn-node-agent/venv
 /opt/primevpn-node-agent/venv/bin/pip install --upgrade pip >/dev/null
-RAW_BASE="https://raw.githubusercontent.com/hadish0123/WIRE_PRIME1/9385b7cf75562ae11acf9fbc8b9cae97570d9191/node-agent"
+RAW_BASE="$BACKEND/api/v1/provisioning/node-agent"
 download_file() {
   local url="$1"
   local out="$2"
   local name="$(basename "$out")"
   echo "Downloading Node Agent: $name"
-  if curl --retry 5 --retry-delay 2 --retry-all-errors -fsSL --max-time 30 "$url" -o "$out"; then
-    return 0
-  fi
-  echo "Raw GitHub download failed for $name; using GitHub API fallback..." >&2
-  local api_url="https://api.github.com/repos/hadish0123/WIRE_PRIME1/contents/node-agent/$name?ref=9385b7cf75562ae11acf9fbc8b9cae97570d9191"
-  local tmp_json
-  tmp_json="$(mktemp)"
-  if ! curl --retry 5 --retry-delay 2 --retry-all-errors -fsSL --max-time 30     -H 'Accept: application/vnd.github+json' "$api_url" -o "$tmp_json"; then
-    rm -f "$tmp_json"
-    echo "GitHub API fallback failed for $name" >&2
-    return 1
-  fi
-  if ! python3 - "$tmp_json" "$out" <<'PY'
-import base64, json, sys
-src, dst = sys.argv[1], sys.argv[2]
-data = json.load(open(src, encoding="utf-8"))
-content = data.get("content")
-if not content:
-    raise SystemExit("GitHub API returned no file content")
-with open(dst, "wb") as f:
-    f.write(base64.b64decode(content))
-PY
-  then
-    rm -f "$tmp_json"
-    echo "GitHub API content decode failed for $name" >&2
-    return 1
-  fi
-  rm -f "$tmp_json"
+  curl --retry 5 --retry-delay 2 --retry-all-errors -fsSL --max-time 30 "$url" -o "$out"
 }
 download_file "$RAW_BASE/pyproject.toml" /opt/primevpn-node-agent/pyproject.toml
 download_file "$RAW_BASE/app.py" /opt/primevpn-node-agent/app.py
@@ -145,6 +119,16 @@ class BootstrapExchange(BaseModel):
 @router.get("/install.sh", response_class=PlainTextResponse)
 def install_script():
     return INSTALL_SCRIPT
+@router.get("/node-agent/{filename}", response_class=PlainTextResponse)
+def node_agent_file(filename: str):
+    allowed = {"pyproject.toml", "app.py", "agent_security.py"}
+    if filename not in allowed:
+        raise HTTPException(404, "Node Agent file not found")
+    path = Path(__file__).resolve().parents[3] / "node-agent" / filename
+    if not path.is_file():
+        raise HTTPException(404, "Node Agent file not found")
+    return PlainTextResponse(path.read_text(encoding="utf-8"))
+
 
 @router.get("/{node_id}/desired-state")
 def desired(node_id: str, admin: Admin = Depends(current_admin), db: Session = Depends(get_db)):
