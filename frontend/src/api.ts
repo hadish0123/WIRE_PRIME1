@@ -32,6 +32,7 @@ export const clients={
  update:(id:string,body:unknown)=>api<any>("/clients/"+id,{method:"PATCH",body:JSON.stringify(body)}),
  devices:(id:string)=>api<any[]>("/clients/"+id+"/devices"),
  revoke:(id:string)=>api<any>("/clients/"+id+"/revoke",{method:"POST"}),
+ remove:(id:string)=>api<any>("/clients/"+id,{method:"DELETE"}),
  credential:(id:string)=>api<any>("/credentials/"+id+"/credentials",{method:"POST"})
 };
 export const configs={download:(id:string)=>api<any>("/configs/"+id)};
