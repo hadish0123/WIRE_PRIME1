@@ -18,6 +18,8 @@ BACKEND="${1:-}"
 TASK_ID="${2:-}"
 BOOTSTRAP="${3:-}"
 PUBLIC_HOST="${4:-}"
+# Railway converts plain-HTTP POST requests at the edge; bootstrap must use HTTPS.
+if [[ "$BACKEND" == http://* ]]; then BACKEND="https://${BACKEND#http://}"; fi
 if [ -z "$BACKEND" ] || [ -z "$TASK_ID" ] || [ -z "$BOOTSTRAP" ] || [ -z "$PUBLIC_HOST" ]; then
   echo "Usage: install.sh BACKEND_URL TASK_ID BOOTSTRAP_TOKEN PUBLIC_VPS_IP" >&2
   exit 2
