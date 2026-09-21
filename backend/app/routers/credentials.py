@@ -48,6 +48,16 @@ def issue(client_id:str,admin:Admin=Depends(require_tenant_manager),db:Session=D
  if not node:raise HTTPException(404,"Node not found")
  device=Device(tenant_id=c.tenant_id,client_id=c.id,fingerprint=fingerprint(c.id+str(__import__("time").time_ns())))
  if inbound.protocol in {Protocol.wireguard,Protocol.amneziawg}:
+  server_ip=ipaddress.ip_interface(inbound.address).ip
+  if ipaddress.ip_interface(c.assigned_address).ip==server_ip:
+   network=ipaddress.ip_network(inbound.network,strict=False)
+   used={ipaddress.ip_interface(x.assigned_address).ip for x in db.query(Client).filter(Client.inbound_id==inbound.id,Client.tenant_id==inbound.tenant_id).all() if x.id!=c.id}
+   used.add(server_ip)
+   for candidate in network.hosts():
+    if candidate not in used:
+     c.assigned_address=f"{candidate}/{network.prefixlen}"
+     break
+   else: raise HTTPException(409,"No free client address remains in this inbound")
   device.assigned_address=allocate_device_address(db,c)
   private,public=wg_keypair();identifier=public
   existing=db.query(InboundWireGuard).filter(InboundWireGuard.inbound_id==inbound.id).first()
