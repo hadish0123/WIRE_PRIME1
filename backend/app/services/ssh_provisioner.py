@@ -38,8 +38,17 @@ curl -fsSL {_q(RAW_BASE+"/app.py")} -o /opt/primevpn-node-agent/app.py
 curl -fsSL {_q(RAW_BASE+"/agent_security.py")} -o /opt/primevpn-node-agent/agent_security.py
 /opt/primevpn-node-agent/venv/bin/pip install --no-cache-dir fastapi 'uvicorn[standard]' pydantic 'PyJWT[crypto]' cryptography
 
-PORT=443
-if ss -ltn 2>/dev/null | grep -qE 'LISTEN[[:space:]].*(:|\\.)443([[:space:]]|$)'; then PORT=9443; fi
+PORT=""
+for CANDIDATE in 443 9443 10443 11443 12443; do
+  if ! ss -ltnH 2>/dev/null | awk '{print $4}' | grep -qE "([.:])$CANDIDATE$"; then
+    PORT="$CANDIDATE"
+    break
+  fi
+done
+if [ -z "$PORT" ]; then
+  echo "No free Agent TCP port found" >&2
+  exit 21
+fi
 
 if printf '%s' {_q(host)} | grep -Eq '^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$'; then
   SAN="subjectAltName=IP:{_q(host)}"
@@ -54,6 +63,7 @@ chmod 600 /etc/primevpn/agent.key
 cat > /etc/primevpn/agent.env <<EOF
 PRIMEVPN_AGENT_VERIFY_PUBLIC_KEY={_q(verify_key)}
 PRIMEVPN_NODE_ID={_q(node_id)}
+PORT=$PORT
 EOF
 chmod 600 /etc/primevpn/agent.env
 
@@ -78,9 +88,18 @@ EOF
 systemctl daemon-reload
 systemctl enable --now primevpn-node-agent.service
 
-sleep 2
-systemctl is-active --quiet primevpn-node-agent.service
-curl -kfsS --max-time 10 "https://127.0.0.1:${{PORT}}/healthz" >/dev/null
+for i in $(seq 1 15); do
+  if systemctl is-active --quiet primevpn-node-agent.service && curl -kfsS --max-time 3 "https://127.0.0.1:${{PORT}}/healthz" >/dev/null; then
+    break
+  fi
+  if [ "$i" -eq 15 ]; then
+    echo "Node Agent failed to start on port ${PORT}" >&2
+    systemctl --no-pager --full status primevpn-node-agent.service >&2 || true
+    journalctl --no-pager -u primevpn-node-agent.service -n 80 >&2 || true
+    exit 22
+  fi
+  sleep 1
+done
 
 # Open the selected Agent port when a host firewall is enabled.
 if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
