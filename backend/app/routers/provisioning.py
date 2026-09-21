@@ -6,7 +6,7 @@ from ..db import get_db,set_platform_context
 from ..deps import current_admin,require_tenant_manager
 from ..models import Admin,Node,ProvisioningTask,NodeState
 from ..services.reconcile import desired_node_state
-from ..security import new_bootstrap_token,hash_token,create_agent_token
+from ..security import new_bootstrap_token,hash_token,create_agent_token,decode_agent_token
 router=APIRouter()
 class BootstrapExchange(BaseModel):
  token:str=Field(min_length=30,max_length=256)
@@ -42,3 +42,27 @@ def exchange(task_id:str,body:BootstrapExchange,db:Session=Depends(get_db)):
  if not node:raise HTTPException(401,"Invalid bootstrap binding")
  task.bootstrap_token_hash=None;task.bootstrap_expires_at=None;task.state=NodeState.syncing.value;node.state=NodeState.syncing;db.commit()
  return {"node_id":node.id,"tenant_id":node.tenant_id,"agent_token":create_agent_token(node.id,node.tenant_id,["read","write"]),"expires_in":600}
+
+
+class AgentRegistration(BaseModel):
+ agent_url:str=Field(min_length=10,max_length=512)
+ version:str|None=Field(default=None,max_length=40)
+ capabilities:dict=Field(default_factory=dict)
+
+@router.post("/{node_id}/register")
+async def register_agent(node_id:str,body:AgentRegistration,request:Request,db:Session=Depends(get_db)):
+ token=request.headers.get("Authorization","")
+ if not token.lower().startswith("bearer "): raise HTTPException(401,"Agent token required")
+ try: claims=decode_agent_token(token[7:].strip())
+ except Exception: raise HTTPException(401,"Invalid agent token")
+ if claims.get("type")!="node_access" or claims.get("sub")!=node_id: raise HTTPException(403,"Agent identity mismatch")
+ node=db.query(Node).filter(Node.id==node_id,Node.tenant_id==claims.get("tenant_id")).first()
+ if not node: raise HTTPException(404,"Node not found")
+ node.agent_url=body.agent_url
+ node.agent_version=body.version
+ import json
+ node.capabilities=json.dumps(body.capabilities or {},separators=(",",":"))
+ node.state=NodeState.ready
+ node.last_seen_at=datetime.now(timezone.utc)
+ db.commit()
+ return {"status":"READY","node_id":node.id}
