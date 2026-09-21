@@ -18,8 +18,9 @@ set -euo pipefail
 BACKEND="${1:-}"
 TASK_ID="${2:-}"
 BOOTSTRAP="${3:-}"
-if [ -z "$BACKEND" ] || [ -z "$TASK_ID" ] || [ -z "$BOOTSTRAP" ]; then
- echo "Usage: install.sh BACKEND_URL TASK_ID BOOTSTRAP_TOKEN" >&2
+PUBLIC_HOST="${4:-}"
+if [ -z "$BACKEND" ] || [ -z "$TASK_ID" ] || [ -z "$BOOTSTRAP" ] || [ -z "$PUBLIC_HOST" ]; then
+ echo "Usage: install.sh BACKEND_URL TASK_ID BOOTSTRAP_TOKEN PUBLIC_VPS_IP" >&2
  exit 2
 fi
 export DEBIAN_FRONTEND=noninteractive
@@ -40,8 +41,8 @@ EXCHANGE="$(curl -fsS --max-time 20 -X POST "$BACKEND/api/v1/provisioning/bootst
 NODE_ID="$(printf '%s' "$EXCHANGE" | python3 -c 'import json,sys; print(json.load(sys.stdin)["node_id"])')"
 AGENT_TOKEN="$(printf '%s' "$EXCHANGE" | python3 -c 'import json,sys; print(json.load(sys.stdin)["agent_token"])')"
 VERIFY_KEY="$(printf '%s' "$EXCHANGE" | python3 -c 'import json,sys; print(json.load(sys.stdin)["agent_verify_public_key"])')"
-HOST="$(hostname -I 2>/dev/null | awk '{print $1}')"
-[ -n "$HOST" ] || { echo "Could not determine VPS address" >&2; exit 13; }
+HOST="$PUBLIC_HOST"
+[ -n "$HOST" ] || { echo "Could not determine VPS public address" >&2; exit 13; }
 PORT=""
 for CANDIDATE in 443 9443 10443 11443 12443; do
  if ! ss -ltnH 2>/dev/null | awk '{print $4}' | grep -qE "([.:])${CANDIDATE}$"; then PORT="$CANDIDATE"; break; fi
