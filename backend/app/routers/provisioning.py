@@ -57,7 +57,7 @@ RAW_BASE="https://raw.githubusercontent.com/hadish0123/WIRE_PRIME1/9385b7cf75562
 curl -fsSL "$RAW_BASE/pyproject.toml" -o /opt/primevpn-node-agent/pyproject.toml
 curl -fsSL "$RAW_BASE/app.py" -o /opt/primevpn-node-agent/app.py
 curl -fsSL "$RAW_BASE/agent_security.py" -o /opt/primevpn-node-agent/agent_security.py
-/opt/primevpn-node-agent/venv/bin/pip install /opt/primevpn-node-agent >/dev/null
+/opt/primevpn-node-agent/venv/bin/pip install "fastapi>=0.115,<1" "uvicorn[standard]>=0.30,<1" "pydantic>=2.9,<3" "PyJWT[crypto]>=2.10,<3" "cryptography>=43,<47" >/dev/null
 printf '%s\n' "$VERIFY_KEY" > /etc/primevpn/agent-public.key
 chmod 600 /etc/primevpn/agent-public.key
 cat > /etc/primevpn/agent.env <<EOF
