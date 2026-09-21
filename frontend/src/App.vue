@@ -136,7 +136,18 @@ async function saveInbound(){loading.value=true;try{if(inboundEditingId.value)aw
 async function openClientDetail(x:any){clientDetail.value=x;clientDevices.value=await clients.devices(x.id);modal.value="client-detail"}
 async function revokeClient(id:string){if(!window.confirm("این کلاینت و تمام Credentialهای فعال آن revoke شود؟"))return;await act(()=>clients.revoke(id),"کلاینت revoke شد")}
 async function copyArtifact(){if(artifact.value?.payload)await navigator.clipboard.writeText(artifact.value.payload);notice.value="Config کپی شد"}
-async function createInstallToken(){\n if(!nodeForm.value.name.trim()||!nodeForm.value.address.trim()){notice.value="نام Node و IP عمومی VPS را وارد کن";return}\n loading.value=true;\n try{\n  const r=await nodes.installToken({name:nodeForm.value.name.trim(),address:nodeForm.value.address.trim()});\n  installCommand.value=String(r?.install_command||"");\n  installNodeInfo.value=r||null;\n  installArtifact.value=r||null;\n  if(!installCommand.value)throw new Error("سرور دستور نصب را برنگرداند");\n  modal.value="node-install";\n }catch(e){notice.value=e instanceof Error?e.message:"ساخت توکن نصب ناموفق"}finally{loading.value=false}\n}\nasync function copyInstallCommand(){\n const command=installArtifact.value?.install_command||installNodeInfo.value?.install_command||installCommand.value;\n if(!command){notice.value="دستور نصب هنوز ساخته نشده است";return}\n try{await navigator.clipboard.writeText(command);notice.value="دستور نصب کپی شد"}catch(e){notice.value="کپی دستور ناموفق بود؛ دستور را دستی انتخاب و کپی کن"}\n}
+async function createInstallToken(){
+ if(!nodeForm.value.name.trim()||!nodeForm.value.address.trim()){notice.value="نام Node و IP عمومی VPS را وارد کن";return}
+ loading.value=true;
+ try{
+  const r=await nodes.installToken({name:nodeForm.value.name.trim(),address:nodeForm.value.address.trim()});
+  installCommand.value=String(r?.install_command||"");
+  installNodeInfo.value=r||null;
+  installArtifact.value=r||null;
+  if(!installCommand.value)throw new Error("سرور دستور نصب را برنگرداند");
+  modal.value="node-install";
+ }catch(e){notice.value=e instanceof Error?e.message:"ساخت توکن نصب ناموفق"}finally{loading.value=false}
+}\nasync function copyInstallCommand(){\n const command=installArtifact.value?.install_command||installNodeInfo.value?.install_command||installCommand.value;\n if(!command){notice.value="دستور نصب هنوز ساخته نشده است";return}\n try{await navigator.clipboard.writeText(command);notice.value="دستور نصب کپی شد"}catch(e){notice.value="کپی دستور ناموفق بود؛ دستور را دستی انتخاب و کپی کن"}\n}
 async function provision(id:string){try{const r=await nodes.provision(id);notice.value=r.bootstrap_token?"Bootstrap token ساخته شد؛ برای نصب Agent استفاده کن":"Provisioning ثبت شد";if(r.bootstrap_token)notice.value=`Bootstrap Token: ${r.bootstrap_token}`;modal.value=null;await load()}catch(e){notice.value=e instanceof Error?e.message:"Provisioning ناموفق"}}
 async function deleteNode(n:any){if(me.value.role==="tenant_operator")return;if(!window.confirm(`نود "${n.name}" حذف شود؟ این کار فقط نودی را حذف می‌کند که Inbound نداشته باشد.`))return;await act(()=>nodes.remove(n.id),"نود حذف شد")}
 function goSection(id:string){section.value=id;drawer.value=false;if(id==="traffic")loadTrafficView()}
