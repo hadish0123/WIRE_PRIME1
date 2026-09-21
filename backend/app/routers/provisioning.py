@@ -28,17 +28,32 @@ fi
 export DEBIAN_FRONTEND=noninteractive
 if command -v apt-get >/dev/null 2>&1; then
   apt-get update -y
-  apt-get install -y curl openssl python3 python3-venv iproute2 iptables wireguard-tools openvpn
+  apt-get install -y curl openssl ca-certificates python3 python3-venv python3-pip iproute2 iptables iptables-persistent wireguard-tools openvpn
 elif command -v dnf >/dev/null 2>&1; then
-  dnf install -y curl openssl python3 python3-pip iproute iptables wireguard-tools openvpn
+  dnf install -y curl openssl ca-certificates python3 python3-pip iproute iptables wireguard-tools openvpn iptables-services
 elif command -v yum >/dev/null 2>&1; then
-  yum install -y curl openssl python3 python3-pip iproute iptables wireguard-tools openvpn
+  yum install -y curl openssl ca-certificates python3 python3-pip iproute iptables wireguard-tools openvpn iptables-services
 else
   echo "Unsupported Linux distribution: apt-get/dnf/yum not found" >&2
   exit 10
 fi
 command -v python3 >/dev/null || { echo "python3 is required" >&2; exit 11; }
 command -v systemctl >/dev/null || { echo "systemd/systemctl is required" >&2; exit 12; }
+# Make node networking survive reboots and keep the VPN forwarding baseline enabled.
+mkdir -p /etc/sysctl.d
+cat > /etc/sysctl.d/99-primevpn.conf <<'SYSCTL'
+net.ipv4.ip_forward=1
+SYSCTL
+sysctl --system >/dev/null 2>&1 || true
+if command -v modprobe >/dev/null 2>&1; then modprobe wireguard >/dev/null 2>&1 || true; fi
+# Avoid interactive iptables-persistent prompts during automated installs.
+if command -v debconf-set-selections >/dev/null 2>&1; then
+  printf '%s\n' 'iptables-persistent iptables-persistent/autosave_v4 boolean true' 'iptables-persistent iptables-persistent/autosave_v6 boolean true' | debconf-set-selections || true
+fi
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl enable netfilter-persistent >/dev/null 2>&1 || true
+  systemctl enable iptables >/dev/null 2>&1 || true
+fi
 EXCHANGE="$(curl -fsS --max-time 20 -X POST "$BACKEND/api/v1/provisioning/bootstrap/$TASK_ID/exchange" -H 'Content-Type: application/json' --data "{\"token\":\"$BOOTSTRAP\"}")"
 NODE_ID="$(printf '%s' "$EXCHANGE" | python3 -c 'import json,sys; print(json.load(sys.stdin)["node_id"])')"
 AGENT_TOKEN="$(printf '%s' "$EXCHANGE" | python3 -c 'import json,sys; print(json.load(sys.stdin)["agent_token"])')"
@@ -101,16 +116,24 @@ systemctl enable primevpn-node-agent.service >/dev/null
 systemctl restart primevpn-node-agent.service
 sleep 2
 curl -kfsS --max-time 5 "https://127.0.0.1:$PORT/healthz" >/dev/null
+# Open the Agent control port in every firewall layer we can manage locally.
 if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q active; then ufw allow "$PORT/tcp" >/dev/null; fi
 if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then firewall-cmd --permanent --add-port="$PORT/tcp" >/dev/null; firewall-cmd --reload >/dev/null; fi
+if command -v iptables >/dev/null 2>&1; then
+  iptables -C INPUT -p tcp --dport "$PORT" -j ACCEPT >/dev/null 2>&1 || iptables -I INPUT -p tcp --dport "$PORT" -j ACCEPT
+fi
+if command -v netfilter-persistent >/dev/null 2>&1; then netfilter-persistent save >/dev/null 2>&1 || true; fi
 AGENT_URL="https://$PUBLIC_HOST:$PORT"
 HEALTH="$(curl -kfsS --max-time 10 "https://127.0.0.1:$PORT/health" -H "X-Agent-Token: $AGENT_TOKEN")"
+printf '%s' "$HEALTH" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("status")=="READY"; assert d.get("capabilities",{}).get("wireguard") is True; assert d.get("capabilities",{}).get("openvpn") is True' >/dev/null
 CAPABILITIES="$(printf '%s' "$HEALTH" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin).get("capabilities") or {},separators=(",",":")))')"
 REG_BODY="$(python3 -c 'import json,sys; print(json.dumps({"agent_url":sys.argv[1],"version":"100.0.0","capabilities":json.loads(sys.argv[2])},separators=(",",":")))' "$AGENT_URL" "$CAPABILITIES")"
 curl -kfsS --max-time 20 -X POST "$BACKEND/api/v1/provisioning/$NODE_ID/register" -H "Authorization: Bearer $AGENT_TOKEN" -H 'Content-Type: application/json' --data "$REG_BODY" >/dev/null
 echo "PRIMEVPN Node installed successfully."
 echo "Node ID: $NODE_ID"
 echo "Agent: $AGENT_URL"
+echo "Local checks: WireGuard=$(command -v wg >/dev/null && echo OK || echo MISSING) OpenVPN=$(command -v openvpn >/dev/null && echo OK || echo MISSING)"
+echo "Firewall: managed locally; cloud/provider firewall may still require UDP/TCP rules in its control panel"
 """
 
 class BootstrapExchange(BaseModel):
