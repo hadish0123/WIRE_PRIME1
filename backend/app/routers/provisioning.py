@@ -93,9 +93,10 @@ curl -kfsS --max-time 5 "https://127.0.0.1:$PORT/healthz" >/dev/null
 if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q active; then ufw allow "$PORT/tcp" >/dev/null; fi
 if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then firewall-cmd --permanent --add-port="$PORT/tcp" >/dev/null; firewall-cmd --reload >/dev/null; fi
 AGENT_URL="https://$PUBLIC_HOST:$PORT"
-HEALTH="$(curl -kfsS --max-time 10 "$AGENT_URL/health" -H "X-Agent-Token: $AGENT_TOKEN")"
+HEALTH="$(curl -kfsS --max-time 10 "https://127.0.0.1:$PORT/health" -H "X-Agent-Token: $AGENT_TOKEN")"
 CAPABILITIES="$(printf '%s' "$HEALTH" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin).get("capabilities") or {},separators=(",",":")))')"
-curl -kfsS --max-time 20 -X POST "$BACKEND/api/v1/provisioning/$NODE_ID/register" -H "Authorization: Bearer $AGENT_TOKEN" -H 'Content-Type: application/json' --data "{"agent_url":"$AGENT_URL","version":"100.0.0","capabilities":$CAPABILITIES}" >/dev/null
+REG_BODY="$(python3 -c 'import json,sys; print(json.dumps({"agent_url":sys.argv[1],"version":"100.0.0","capabilities":json.loads(sys.argv[2])},separators=(",",":")))' "$AGENT_URL" "$CAPABILITIES")"
+curl -kfsS --max-time 20 -X POST "$BACKEND/api/v1/provisioning/$NODE_ID/register" -H "Authorization: Bearer $AGENT_TOKEN" -H 'Content-Type: application/json' --data "$REG_BODY" >/dev/null
 echo "PRIMEVPN Node installed successfully."
 echo "Node ID: $NODE_ID"
 echo "Agent: $AGENT_URL"
