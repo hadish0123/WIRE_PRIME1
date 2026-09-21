@@ -57,7 +57,27 @@ RAW_BASE="https://raw.githubusercontent.com/hadish0123/WIRE_PRIME1/9385b7cf75562
 download_file() {
   local url="$1"
   local out="$2"
-  curl --retry 5 --retry-delay 2 --retry-all-errors -fsSL --max-time 30 "$url" -o "$out"
+  local name="$(basename "$out")"
+  echo "Downloading Node Agent: $name"
+  if curl --retry 5 --retry-delay 2 --retry-all-errors -fsSL --max-time 30 "$url" -o "$out"; then
+    return 0
+  fi
+  echo "Raw GitHub download failed for $name; using GitHub API fallback..." >&2
+  local api_url="https://api.github.com/repos/hadish0123/WIRE_PRIME1/contents/node-agent/$name?ref=9385b7cf75562ae11acf9fbc8b9cae97570d9191"
+  local tmp_json
+  tmp_json="$(mktemp)"
+  trap 'rm -f "$tmp_json"' RETURN
+  curl --retry 5 --retry-delay 2 --retry-all-errors -fsSL --max-time 30     -H 'Accept: application/vnd.github+json' "$api_url" -o "$tmp_json"
+  python3 - "$tmp_json" "$out" <<'PY'
+import base64, json, sys
+src, dst = sys.argv[1], sys.argv[2]
+data = json.load(open(src, encoding="utf-8"))
+content = data.get("content")
+if not content:
+    raise SystemExit("GitHub API returned no file content")
+with open(dst, "wb") as f:
+    f.write(base64.b64decode(content))
+PY
 }
 download_file "$RAW_BASE/pyproject.toml" /opt/primevpn-node-agent/pyproject.toml
 download_file "$RAW_BASE/app.py" /opt/primevpn-node-agent/app.py
