@@ -40,7 +40,7 @@ async def _traffic_monitor():
                             previous=_traffic_previous.get(key)
                             delta_in=max(0,current[0]-(previous[0] if previous else current[0]))
                             delta_out=max(0,current[1]-(previous[1] if previous else current[1]))
-                            print(f"VPN_PEER node={node.id} inbound={inbound.id} peer={peer.get("public_key")} endpoint={peer.get("endpoint")} handshake={current[2]} rx={current[0]} tx={current[1]} delta_rx={delta_in} delta_tx={delta_out}", flush=True)
+                            print(f"VPN_PEER node={node.id} inbound={inbound.id} peer={peer.get('public_key')} endpoint={peer.get('endpoint')} handshake={current[2]} rx={current[0]} tx={current[1]} delta_rx={delta_in} delta_tx={delta_out}", flush=True)
                             _traffic_previous[key]=current
                     except Exception as exc:
                         print(f"VPN_TRAFFIC_ERROR node={node.id} inbound={inbound.id} interface={inbound.interface} error={exc}", flush=True)
