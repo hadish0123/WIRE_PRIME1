@@ -3,7 +3,7 @@ from datetime import datetime,timezone
 from fastapi import FastAPI,Header,HTTPException
 from pydantic import BaseModel,Field
 from agent_security import verify_control_token,require_scope
-VERSION="100.0.1" # firewall/listener verification
+VERSION="100.0.2" # VPN firewall, listener and path diagnostics
 
 app=FastAPI(title="PRIMEVPN Node Agent",version=VERSION)
 class ApplyConfig(BaseModel):
@@ -162,6 +162,24 @@ def apply(data:ApplyConfig,x_agent_token:str|None=Header(default=None)):
   try:os.unlink(tmp)
   except FileNotFoundError:pass
   raise HTTPException(502,f"Apply failed and previous configuration was restored: {e}")
+
+@app.get("/diagnostics/wireguard/{interface}/{port}")
+def wireguard_diagnostics(interface:str,port:int,x_agent_token:str|None=Header(default=None)):
+ auth(x_agent_token,"read");safe_interface(interface)
+ if port<1 or port>65535: raise HTTPException(400,"Invalid UDP port")
+ listener=subprocess.run(["wg","show",interface,"listen-port"],capture_output=True,text=True,timeout=10) if shutil.which("wg") else None
+ iptables_rules=[]
+ if shutil.which("iptables"):
+  p=subprocess.run(["iptables","-L","INPUT","-v","-n","-x"],capture_output=True,text=True,timeout=10)
+  for line in p.stdout.splitlines():
+   if "udp" in line and f"dpt:{port}" in line: iptables_rules.append(line.strip())
+ nft_lines=[]
+ if shutil.which("nft"):
+  p=subprocess.run(["nft","-a","list","ruleset"],capture_output=True,text=True,timeout=10)
+  for line in p.stdout.splitlines():
+   if "udp" in line and str(port) in line: nft_lines.append(line.strip())
+ route=subprocess.run(["ip","route","show","default"],capture_output=True,text=True,timeout=10) if shutil.which("ip") else None
+ return {"interface":interface,"configured_port":port,"live_port":(listener.stdout.strip() if listener and listener.returncode==0 else None),"iptables_input_matches":iptables_rules,"nft_udp_port_matches":nft_lines[:20],"default_route":(route.stdout.strip() if route and route.returncode==0 else None)}
 
 @app.get("/counters/wireguard/{interface}")
 def counters(interface:str,x_agent_token:str|None=Header(default=None)):
