@@ -8,6 +8,13 @@ from cryptography.x509.oid import NameOID
 def wg_keypair():
  private=x25519.X25519PrivateKey.generate();pub=private.public_key()
  return base64.b64encode(private.private_bytes(Encoding.Raw,PrivateFormat.Raw,NoEncryption())).decode(),base64.b64encode(pub.public_bytes(Encoding.Raw,PublicFormat.Raw)).decode()
+
+def wg_public_key(private_key:str)->str:
+    """Derive the WireGuard public key from the actual stored private key."""
+    raw=base64.b64decode(private_key.strip(),validate=True)
+    if len(raw)!=32: raise ValueError("Invalid WireGuard private key length")
+    private=x25519.X25519PrivateKey.from_private_bytes(raw)
+    return base64.b64encode(private.public_key().public_bytes(Encoding.Raw,PublicFormat.Raw)).decode()
 def _name(common):return x509.Name([x509.NameAttribute(NameOID.COMMON_NAME,common)])
 def openvpn_ca():
  key=rsa.generate_private_key(public_exponent=65537,key_size=3072);now=datetime.now(timezone.utc)
