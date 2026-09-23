@@ -5,7 +5,7 @@ from ..db import get_db
 from ..deps import current_admin,require_tenant_manager,can_access_client
 from ..models import Admin,Client,Device,Inbound,InboundOpenVPN,InboundWireGuard,ClientCredential,ConfigArtifact,Protocol,Node,Quota,TrafficUsage
 from ..security import encrypt_secret,decrypt_secret
-from ..services.credentials import wg_keypair,openvpn_ca,openvpn_server,openvpn_client,openvpn_tls_crypt_key,fingerprint
+from ..services.credentials import wg_keypair,wg_public_key,openvpn_ca,openvpn_server,openvpn_client,openvpn_tls_crypt_key,fingerprint
 from ..services.config_artifacts import create_artifact
 from ..services.inbound_config import render_inbound
 from ..services.agent_client import apply as apply_agent
@@ -63,6 +63,9 @@ def issue(client_id:str,admin:Admin=Depends(require_tenant_manager),db:Session=D
    device.assigned_address=f"{ipaddress.ip_interface(device.assigned_address).ip}/32"
    wg=db.query(InboundWireGuard).filter(InboundWireGuard.inbound_id==inbound.id).first()
    material=json.loads(decrypt_secret(existing_cred.encrypted_private_material))
+   if inbound.protocol in {Protocol.wireguard,Protocol.amneziawg}:
+    derived_public=wg_public_key(decrypt_secret(wg.server_private_key_encrypted))
+    if wg.server_public_key != derived_public: wg.server_public_key=derived_public
    awg_params=""
    if inbound.protocol==Protocol.amneziawg:
     awg_params=f"\nJc = 7\nJmin = 8\nJmax = 80\nS1 = {wg.amnezia_s1}\nS2 = {wg.amnezia_s2}\nS3 = {wg.amnezia_s3}\nS4 = {wg.amnezia_s4}\nH1 = {wg.amnezia_h1}\nH2 = {wg.amnezia_h2}\nH3 = {wg.amnezia_h3}\nH4 = {wg.amnezia_h4}"
