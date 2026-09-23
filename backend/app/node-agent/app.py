@@ -230,7 +230,7 @@ def wireguard_diagnostics(interface:str,port:int,x_agent_token:str|None=Header(d
   for line in p.stdout.splitlines():
    if "udp" in line and str(port) in line: nft_lines.append(line.strip())
  route=subprocess.run(["ip","route","show","default"],capture_output=True,text=True,timeout=10) if shutil.which("ip") else None
- return {"interface":interface,"configured_port":port,"live_port":(listener.stdout.strip() if listener and listener.returncode==0 else None),"iptables_input_matches":iptables_rules,"nft_udp_port_matches":nft_lines[:20],"default_route":(route.stdout.strip() if route and route.returncode==0 else None)}
+ peer_count=0\n peer_details=[]\n if shutil.which("wg") and listener and listener.returncode==0:\n  dump=subprocess.run(["wg","show",interface,"dump"],capture_output=True,text=True,timeout=10)\n  if dump.returncode==0:\n   for line in dump.stdout.splitlines()[1:]:\n    c=line.split("\\t")\n    if len(c)>=8 and c[0]:\n     peer_count+=1\n     peer_details.append({"public_key":c[0],"endpoint":c[2],"last_handshake":int(c[4]),"bytes_received":int(c[5]),"bytes_sent":int(c[6])})\n return {"interface":interface,"configured_port":port,"live_port":(listener.stdout.strip() if listener and listener.returncode==0 else None),"peer_count":peer_count,"peers":peer_details,"iptables_input_matches":iptables_rules,"nft_udp_port_matches":nft_lines[:20],"default_route":(route.stdout.strip() if route and route.returncode==0 else None)}
 @app.get("/counters/wireguard/{interface}")
 def counters(interface:str,x_agent_token:str|None=Header(default=None)):
  auth(x_agent_token,"read");safe_interface(interface)
