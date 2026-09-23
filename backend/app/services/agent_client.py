@@ -21,10 +21,26 @@ def call(node,method,path,payload=None,timeout=30):
         except httpx.HTTPError as e:
             raise RuntimeError(f"Node agent {method} {path} connection failed: {e}") from e
 
+
+def _listen_port(config):
+    import re
+    m=re.search(r"(?m)^ListenPort\\s*=\\s*(\\d+)\\s*$",config)
+    if not m: raise RuntimeError("WireGuard ListenPort missing from rendered configuration")
+    return int(m.group(1))
+
 def apply(node,protocol,interface,config,files=None):
     payload={"protocol":protocol,"interface":interface,"config":config,"files":files or {}}
     try:
-        return call(node,"POST","apply",payload,60)
+        result=call(node,"POST","apply",payload,60)
+        if protocol=="wireguard":
+            diag=call(node,"GET",f"diagnostics/wireguard/{interface}/{_listen_port(config)}",None,20)
+            if diag.get("runtime_error"):
+                raise RuntimeError("Node WireGuard runtime diagnostic failed: "+str(diag["runtime_error"]))
+            if int(diag.get("live_port") or 0) != _listen_port(config):
+                raise RuntimeError(f"Node WireGuard listen port mismatch: expected {_listen_port(config)} got {diag.get('live_port')}")
+            if int(diag.get("peer_count") or 0) < 1:
+                raise RuntimeError("Node WireGuard has no installed peers after apply")
+        return result
     except RuntimeError as first_error:
         if protocol in {"wireguard","amneziawg"} and "502" in str(first_error):
             try:
