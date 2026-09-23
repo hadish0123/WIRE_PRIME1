@@ -6,10 +6,10 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from ..db import get_db, set_platform_context
 from ..deps import current_admin, require_tenant_manager
-from ..models import Admin, Node, ProvisioningTask, NodeState
+from ..models import Admin, Node, ProvisioningTask, NodeState, Inbound, InboundWireGuard, Client, ResourceState, Protocol
 from ..services.reconcile import desired_node_state
-from ..security import new_bootstrap_token, hash_token, create_agent_token, decode_agent_token
-from ..config import settings
+from ..security import new_bootstrap_token, hash_token, create_agent_token, decode_agent_token, encrypt_secret
+from ..config import settings\nfrom ..services.credentials import wg_keypair\nfrom ..services.agent_client import apply as apply_agent\nfrom ..services.inbound_config import render_inbound\nfrom ..routers.credentials import issue as issue_client_credential
 
 router = APIRouter()
 
@@ -263,4 +263,29 @@ async def register_agent(node_id: str, body: AgentRegistration, request: Request
     node.state = NodeState.ready
     node.last_seen_at = datetime.now(timezone.utc)
     db.commit()
-    return {"status": "READY", "node_id": node.id}
+    auto_setup = {"created": False}
+    existing = db.query(Inbound).filter(Inbound.node_id == node.id, Inbound.tenant_id == node.tenant_id).first()
+    if existing is None:
+        used_ports = {int(x[0]) for x in db.query(Inbound.listen_port).filter(Inbound.node_id == node.id).all()}
+        listen_port = next((p for p in (443, 8443, 51820, 51821) if p not in used_ports), None)
+        if listen_port is None:
+            raise HTTPException(409, "No automatic WireGuard test port is available")
+        manager = db.query(Admin).filter(Admin.tenant_id == node.tenant_id, Admin.role == "tenant_manager").first() or db.query(Admin).filter(Admin.tenant_id == node.tenant_id).first()
+        if manager is None:
+            raise HTTPException(409, "No tenant administrator is available for automatic node test setup")
+        inbound = Inbound(tenant_id=node.tenant_id,node_id=node.id,name="AUTO-NODE-TEST",protocol=Protocol.wireguard,listen_port=listen_port,interface="wg0",address="10.66.0.1/24",network="10.66.0.0/24",dns="1.1.1.1",mtu=1420,enabled=True,desired_state="ACTIVE")
+        db.add(inbound); db.flush()
+        private, public = wg_keypair()
+        db.add(InboundWireGuard(inbound_id=inbound.id,server_public_key=public,server_private_key_encrypted=encrypt_secret(private))); db.flush()
+        try:
+            rendered=render_inbound(inbound,node,db)
+            apply_agent(node,rendered["protocol"],rendered["interface"],rendered["config"],rendered.get("files"))
+            client=Client(tenant_id=node.tenant_id,created_by_admin_id=manager.id,inbound_id=inbound.id,name="AUTO-NODE-TEST-CLIENT",status=ResourceState.active,assigned_address="10.66.0.2/32")
+            db.add(client); db.flush()
+            credential=issue_client_credential(client.id,admin=manager,db=db)
+            auto_setup={"created":True,"inbound_id":inbound.id,"client_id":client.id,"credential_id":credential.get("credential_id"),"listen_port":listen_port,"traffic_status":"NO_TRAFFIC_YET","traffic_reason":"The test client exists, but no phone/PC has connected with its generated configuration yet."}
+            db.commit()
+        except Exception as exc:
+            db.rollback()
+            raise HTTPException(502,f"Automatic node smoke-test setup failed: {exc}")
+    return {"status":"READY","node_id":node.id,"auto_setup":auto_setup}
