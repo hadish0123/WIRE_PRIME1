@@ -1,6 +1,7 @@
 from __future__ import annotations
 from ..models import Inbound, InboundWireGuard, InboundOpenVPN, Node, Protocol
 from ..security import decrypt_secret
+from .credentials import wg_public_key
 
 def render_inbound(inbound:Inbound,node:Node,db):
     if inbound.protocol in {Protocol.wireguard,Protocol.amneziawg}:
@@ -8,6 +9,10 @@ def render_inbound(inbound:Inbound,node:Node,db):
         if not wg or not wg.server_private_key_encrypted:
             raise RuntimeError("WireGuard server keys are not initialized")
         private=decrypt_secret(wg.server_private_key_encrypted)
+        derived_public=wg_public_key(private)
+        # The private key is authoritative; repair stale DB public-key metadata.
+        if wg.server_public_key != derived_public:
+            wg.server_public_key=derived_public
         lines=[
             "[Interface]",
             f"Address = {inbound.address}",
