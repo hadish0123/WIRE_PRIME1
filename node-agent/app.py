@@ -3,7 +3,7 @@ from datetime import datetime,timezone
 from fastapi import FastAPI,Header,HTTPException
 from pydantic import BaseModel,Field
 from agent_security import verify_control_token,require_scope
-VERSION="100.0.4" # hardened node preflight and WireGuard runtime diagnostics
+VERSION="100.0.5" # hardened node preflight and WireGuard runtime diagnostics
 
 app=FastAPI(title="PRIMEVPN Node Agent",version=VERSION)
 class ApplyConfig(BaseModel):
