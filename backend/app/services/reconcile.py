@@ -1,4 +1,5 @@
 import json
+import ipaddress
 from sqlalchemy.orm import Session
 from ..models import Node,Inbound,Client,ClientCredential,Device,InboundWireGuard,InboundOpenVPN,Protocol,NodeState,ProvisioningTask
 from ..security import decrypt_secret
@@ -32,7 +33,11 @@ def _wg_config(node,inbound,db):
         cred=db.query(ClientCredential).filter(ClientCredential.client_id==client.id,ClientCredential.revoked_at.is_(None)).order_by(ClientCredential.created_at.desc()).all()
         for credential in cred:
             device=db.query(Device).filter(Device.id==credential.device_id,Device.client_id==client.id).first() if credential.device_id else None
-            allowed=device.assigned_address if device and device.assigned_address else client.assigned_address
+            raw_allowed=device.assigned_address if device and device.assigned_address else client.assigned_address
+            try:
+                allowed=f"{ipaddress.ip_interface(raw_allowed).ip}/32"
+            except ValueError:
+                raise RuntimeError(f"Invalid WireGuard peer address: {raw_allowed}")
             lines += ["","[Peer]",f"PublicKey = {credential.public_identifier}",f"AllowedIPs = {allowed}"]
     return "\n".join(lines)+"\n"
 
