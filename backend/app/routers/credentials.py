@@ -83,7 +83,7 @@ def issue(client_id:str,admin:Admin=Depends(require_tenant_manager),db:Session=D
      c.assigned_address=f"{candidate}/{ipaddress.ip_interface(c.assigned_address).network.prefixlen}"
      break
    else: raise HTTPException(409,"No free client address remains in this inbound")
-  device.assigned_address=allocate_device_address(db,c)
+  device.assigned_address=f"{ipaddress.ip_interface(allocate_device_address(db,c)).ip}/32"
   private,public=wg_keypair();identifier=public
   existing=db.query(InboundWireGuard).filter(InboundWireGuard.inbound_id==inbound.id).first()
   if not existing:raise HTTPException(409,"WireGuard inbound keys are not initialized")
@@ -113,7 +113,8 @@ def issue(client_id:str,admin:Admin=Depends(require_tenant_manager),db:Session=D
   peers=[]
   for cred_row,dev in creds:
    if not dev.assigned_address: continue
-   peers += ["","[Peer]",f"PublicKey = {cred_row.public_identifier}",f"AllowedIPs = {dev.assigned_address}"]
+   peer_ip=f"{ipaddress.ip_interface(dev.assigned_address).ip}/32"
+   peers += ["","[Peer]",f"PublicKey = {cred_row.public_identifier}",f"AllowedIPs = {peer_ip}"]
   full_config=rendered["config"].rstrip()+"\n"+"\n".join(peers)+"\n"
   try:
    apply_agent(node,rendered["protocol"],rendered["interface"],full_config,rendered.get("files"))
