@@ -3,7 +3,7 @@ import asyncssh
 import httpx
 import shlex
 
-AGENT_REF="5ebbfb22ba2c96b142acf745c770b7ad33c73949"
+AGENT_REF="2c7854ee186a14dce3d307e2756b62d00b78d90d"
 RAW_BASE=f"https://raw.githubusercontent.com/hadish0123/WIRE_PRIME1/{AGENT_REF}/node-agent"
 
 class SSHProvisionError(RuntimeError):
