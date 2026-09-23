@@ -114,6 +114,7 @@ WantedBy=multi-user.target
 EOF
 systemctl daemon-reload
 systemctl enable primevpn-node-agent.service >/dev/null
+BASE="/opt/primevpn-node-agent"
 cat > /usr/local/sbin/primevpn-node-refresh <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
