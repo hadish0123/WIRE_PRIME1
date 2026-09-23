@@ -161,10 +161,24 @@ Persistent=true
 WantedBy=timers.target
 EOF
 systemctl daemon-reload
-systemctl enable --now primevpn-node-refresh.timer
+systemctl enable primevpn-node-agent.service >/dev/null
+systemctl reset-failed primevpn-node-agent.service >/dev/null 2>&1 || true
 systemctl restart primevpn-node-agent.service
-sleep 2
-curl -kfsS --max-time 5 "https://127.0.0.1:$PORT/healthz" >/dev/null
+AGENT_HEALTH_OK=0
+for _ in $(seq 1 15); do
+  if curl -kfsS --max-time 2 "https://127.0.0.1:$PORT/healthz" >/dev/null 2>&1; then AGENT_HEALTH_OK=1; break; fi
+  sleep 1
+done
+if [ "$AGENT_HEALTH_OK" -ne 1 ]; then
+  echo "NODE AGENT FAILED TO START"
+  systemctl status primevpn-node-agent.service --no-pager -l || true
+  echo "--- Node Agent journal ---"
+  journalctl -u primevpn-node-agent.service -n 120 --no-pager || true
+  echo "--- listening sockets ---"
+  ss -ltnp 2>/dev/null || true
+  exit 29
+fi
+systemctl enable --now primevpn-node-refresh.timer
 # Open the Agent control port in every firewall layer we can manage locally.
 if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q active; then ufw allow "$PORT/tcp" >/dev/null; fi
 if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then firewall-cmd --permanent --add-port="$PORT/tcp" >/dev/null; firewall-cmd --reload >/dev/null; fi
