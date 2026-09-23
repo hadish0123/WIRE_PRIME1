@@ -3,14 +3,20 @@ import ipaddress
 from sqlalchemy.orm import Session
 from ..models import Node,Inbound,Client,ClientCredential,Device,InboundWireGuard,InboundOpenVPN,Protocol,NodeState,ProvisioningTask
 from ..security import decrypt_secret
+from .credentials import wg_public_key
 
 def _wg_config(node,inbound,db):
     cfg=db.query(InboundWireGuard).filter(InboundWireGuard.inbound_id==inbound.id).first()
     if not cfg or not cfg.server_private_key_encrypted:
         return None
+    server_private=decrypt_secret(cfg.server_private_key_encrypted)
+    derived_public=wg_public_key(server_private)
+    # Keep the database metadata synchronized with the authoritative private key.
+    if cfg.server_public_key != derived_public:
+        cfg.server_public_key=derived_public
     lines=[
         "[Interface]",
-        f"PrivateKey = {decrypt_secret(cfg.server_private_key_encrypted)}",
+        f"PrivateKey = {server_private}",
         f"Address = {inbound.address}",
         f"ListenPort = {inbound.listen_port}",
     ]
