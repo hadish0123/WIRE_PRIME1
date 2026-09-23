@@ -46,6 +46,14 @@ def issue(client_id:str,admin:Admin=Depends(require_tenant_manager),db:Session=D
  if not inbound:raise HTTPException(404,"Inbound not found")
  node=db.query(Node).filter(Node.id==inbound.node_id,Node.tenant_id==admin.tenant_id).first()
  if not node:raise HTTPException(404,"Node not found")
+ try:
+  endpoint_ip=ipaddress.ip_address(node.address)
+  if endpoint_ip.is_private or endpoint_ip.is_loopback or endpoint_ip.is_link_local or endpoint_ip.is_multicast:
+   raise HTTPException(409,f"Node endpoint must be a public address, got {node.address}")
+ except ValueError:
+  if not node.address or any(ch.isspace() for ch in node.address) or node.address.lower() in {"localhost","localhost.localdomain"}:
+   raise HTTPException(409,"Node endpoint hostname is invalid")
+
  # Download is idempotent: do not create another device/peer when the user
  # requests the same client's config again.
  existing_cred=db.query(ClientCredential).filter(
