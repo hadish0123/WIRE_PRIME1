@@ -58,6 +58,27 @@ def issue(client_id:str,admin:Admin=Depends(require_tenant_manager),db:Session=D
    ConfigArtifact.tenant_id==admin.tenant_id,
    ConfigArtifact.protocol==inbound.protocol
   ).order_by(ConfigArtifact.expires_at.desc()).first()
+  device=db.query(Device).filter(Device.id==existing_cred.device_id,Device.client_id==c.id).first()
+  if inbound.protocol in {Protocol.wireguard,Protocol.amneziawg} and device and device.assigned_address:
+   device.assigned_address=f"{ipaddress.ip_interface(device.assigned_address).ip}/32"
+   wg=db.query(InboundWireGuard).filter(InboundWireGuard.inbound_id==inbound.id).first()
+   material=json.loads(decrypt_secret(existing_cred.encrypted_private_material))
+   awg_params=""
+   if inbound.protocol==Protocol.amneziawg:
+    awg_params=f"\nJc = 7\nJmin = 8\nJmax = 80\nS1 = {wg.amnezia_s1}\nS2 = {wg.amnezia_s2}\nS3 = {wg.amnezia_s3}\nS4 = {wg.amnezia_s4}\nH1 = {wg.amnezia_h1}\nH2 = {wg.amnezia_h2}\nH3 = {wg.amnezia_h3}\nH4 = {wg.amnezia_h4}"
+   payload=f"[Interface]\nPrivateKey = {material['private_key']}\nAddress = {device.assigned_address}\nDNS = {inbound.dns or '1.1.1.1'}{awg_params}\n\n[Peer]\nPublicKey = {wg.server_public_key}\nAllowedIPs = 0.0.0.0/0, ::/0\nEndpoint = {node.address}:{inbound.listen_port}\nPersistentKeepalive = 25\n"
+   rendered=render_inbound(inbound,node,db)
+   creds=db.query(ClientCredential,Device).join(Device,Device.id==ClientCredential.device_id).join(Client,Client.id==ClientCredential.client_id).filter(Client.inbound_id==inbound.id,Client.tenant_id==c.tenant_id,ClientCredential.revoked_at.is_(None)).all()
+   peers=[]
+   for cred_row,dev in creds:
+    if not dev.assigned_address: continue
+    peer_ip=f"{ipaddress.ip_interface(dev.assigned_address).ip}/32"
+    peers += ["","[Peer]",f"PublicKey = {cred_row.public_identifier}",f"AllowedIPs = {peer_ip}"]
+   apply_agent(node,rendered["protocol"],rendered["interface"],rendered["config"].rstrip()+"\n"+"\n".join(peers)+"\n",rendered.get("files"))
+   refreshed=create_artifact(db,c,inbound.protocol,payload)
+   return {"credential_id":existing_cred.id,"device_id":existing_cred.device_id,
+           "artifact_id":refreshed.id,"public_identifier":existing_cred.public_identifier,
+           "fingerprint":existing_cred.fingerprint,"expires_at":refreshed.expires_at}
   if existing_artifact:
    from ..services.config_artifacts import read_artifact
    try:
