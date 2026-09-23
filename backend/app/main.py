@@ -33,7 +33,7 @@ async def _traffic_monitor():
                     try:
                         try:
                             diag=agent_client.call(node,"GET",f"diagnostics/wireguard/{inbound.interface}/{inbound.listen_port}",timeout=10)
-                            print(f"VPN_PATH node={node.id} inbound={inbound.id} port={inbound.listen_port} live_port={diag.get('live_port')} iptables={diag.get('iptables_input_matches')} nft={diag.get('nft_udp_port_matches')} route={diag.get('default_route')}", flush=True)
+                            print(f"VPN_PATH node={node.id} inbound={inbound.id} port={inbound.listen_port} live_port={diag.get('live_port')} live_public_key={diag.get('live_public_key')} iptables={diag.get('iptables_input_matches')} nft={diag.get('nft_udp_port_matches')} route={diag.get('default_route')}", flush=True)
                         except Exception as diag_exc:
                             print(f"VPN_PATH_DIAGNOSTICS_UNAVAILABLE node={node.id} inbound={inbound.id} error={diag_exc}", flush=True)
                         data=agent_client.call(node,"GET",f"counters/wireguard/{inbound.interface}",timeout=10)
