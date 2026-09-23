@@ -179,14 +179,23 @@ def wireguard_diagnostics(interface:str,port:int,x_agent_token:str|None=Header(d
   for line in p.stdout.splitlines():
    if "udp" in line and str(port) in line: nft_lines.append(line.strip())
  route=subprocess.run(["ip","route","show","default"],capture_output=True,text=True,timeout=10) if shutil.which("ip") else None
- public_key=subprocess.run(["wg","show",interface,"public-key"],capture_output=True,text=True,timeout=10) if shutil.which("wg") else None
+ public_key=None
+ if shutil.which("wg"):
+  public_key=subprocess.run(["wg","show",interface,"public-key"],capture_output=True,text=True,timeout=10)
+  if not public_key or public_key.returncode!=0 or not public_key.stdout.strip():
+   conf=subprocess.run(["wg","showconf",interface],capture_output=True,text=True,timeout=10)
+   if conf.returncode==0:
+    private_match=re.search(r"(?m)^PrivateKey\\s*=\\s*([^\\n]+)$",conf.stdout)
+    if private_match:
+     derived=subprocess.run(["wg","pubkey"],input=private_match.group(1).strip()+"\\n",capture_output=True,text=True,timeout=10)
+     if derived.returncode==0: public_key=derived
  peer_dump=subprocess.run(["wg","show",interface,"dump"],capture_output=True,text=True,timeout=10) if shutil.which("wg") else None
  peers=[]
  if peer_dump and peer_dump.returncode==0:
   for line in peer_dump.stdout.splitlines()[1:]:
    parts=line.split("\t")
    if len(parts)>=8:
-    peers.append({"public_key":parts[0],"endpoint":parts[2],"last_handshake":int(parts[4]),"bytes_received":int(parts[5]),"bytes_sent":int(parts[6])})
+    peers.append({"public_key":parts[0],"allowed_ips":parts[3],"endpoint":parts[2],"last_handshake":int(parts[4]),"bytes_received":int(parts[5]),"bytes_sent":int(parts[6])})
  return {"interface":interface,"configured_port":port,"live_port":(listener.stdout.strip() if listener and listener.returncode==0 else None),"live_public_key":(public_key.stdout.strip() if public_key and public_key.returncode==0 else None),"peer_count":len(peers),"peers":peers,"iptables_input_matches":iptables_rules,"nft_udp_port_matches":nft_lines[:20],"default_route":(route.stdout.strip() if route and route.returncode==0 else None)}
 
 @app.get("/counters/wireguard/{interface}")
