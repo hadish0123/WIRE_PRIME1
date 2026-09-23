@@ -111,6 +111,7 @@ def issue(client_id:str,admin:Admin=Depends(require_tenant_manager),db:Session=D
   private,public=wg_keypair();identifier=public
   existing=db.query(InboundWireGuard).filter(InboundWireGuard.inbound_id==inbound.id).first()
   if not existing:raise HTTPException(409,"WireGuard inbound keys are not initialized")
+  existing.server_public_key=wg_public_key(decrypt_secret(existing.server_private_key_encrypted))
   material={"private_key":private,"assigned_address":device.assigned_address}
   awg_params=""
   if inbound.protocol==Protocol.amneziawg:
