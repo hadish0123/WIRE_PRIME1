@@ -114,6 +114,49 @@ WantedBy=multi-user.target
 EOF
 systemctl daemon-reload
 systemctl enable primevpn-node-agent.service >/dev/null
+cat > /usr/local/sbin/primevpn-node-refresh <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+BACKEND="$BACKEND"
+BASE="/opt/primevpn-node-agent"
+TMP="${BASE}/.refresh"
+mkdir -p "$TMP"
+changed=0
+for name in pyproject.toml app.py agent_security.py; do
+  curl --retry 3 --retry-all-errors -fsSL --max-time 30 "$BACKEND/api/v1/provisioning/node-agent/$name" -o "$TMP/$name"
+  if ! cmp -s "$TMP/$name" "$BASE/$name"; then changed=1; fi
+done
+if [ "$changed" -eq 1 ]; then
+  cp "$TMP/pyproject.toml" "$BASE/pyproject.toml"
+  cp "$TMP/app.py" "$BASE/app.py"
+  cp "$TMP/agent_security.py" "$BASE/agent_security.py"
+  "$BASE/venv/bin/pip" install --no-cache-dir "fastapi>=0.115,<1" "uvicorn[standard]>=0.30,<1" "pydantic>=2.9,<3" "PyJWT[crypto]>=2.10,<3" "cryptography>=43,<47" >/dev/null
+  systemctl restart primevpn-node-agent.service
+fi
+rm -rf "$TMP"
+EOF
+chmod 700 /usr/local/sbin/primevpn-node-refresh
+cat > /etc/systemd/system/primevpn-node-refresh.service <<'EOF'
+[Unit]
+Description=PRIMEVPN Node Agent updater
+After=network-online.target
+Wants=network-online.target
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/primevpn-node-refresh
+EOF
+cat > /etc/systemd/system/primevpn-node-refresh.timer <<'EOF'
+[Unit]
+Description=Keep PRIMEVPN Node Agent synchronized
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=15min
+Persistent=true
+[Install]
+WantedBy=timers.target
+EOF
+systemctl daemon-reload
+systemctl enable --now primevpn-node-refresh.timer
 systemctl restart primevpn-node-agent.service
 sleep 2
 curl -kfsS --max-time 5 "https://127.0.0.1:$PORT/healthz" >/dev/null
