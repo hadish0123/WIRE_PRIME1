@@ -3,7 +3,7 @@ from datetime import datetime,timezone
 from fastapi import FastAPI,Header,HTTPException
 from pydantic import BaseModel,Field
 from agent_security import verify_control_token,require_scope
-VERSION="100.0.5" # full infrastructure preflight and WireGuard diagnostics
+VERSION="100.0.5" # hardened node preflight and WireGuard runtime diagnostics
 
 app=FastAPI(title="PRIMEVPN Node Agent",version=VERSION)
 class ApplyConfig(BaseModel):
@@ -20,6 +20,26 @@ def auth(token,scope="read"):
 
  raise HTTPException(401,"Agent authentication failed")
 def caps():return {"wireguard":shutil.which("wg") is not None,"amneziawg":shutil.which("awg") is not None,"openvpn":shutil.which("openvpn") is not None}
+def allow_input_port(port,protocol):
+ if not port or not str(port).isdigit(): return
+ port=str(port)
+ if shutil.which("iptables"):
+  proto="udp" if protocol in {"wireguard","amneziawg"} else "tcp"
+  check=subprocess.run(["iptables","-C","INPUT","-p",proto,"--dport",port,"-j","ACCEPT"],capture_output=True,text=True,timeout=10)
+  if check.returncode:
+   subprocess.run(["iptables","-I","INPUT","-p",proto,"--dport",port,"-j","ACCEPT"],capture_output=True,text=True,timeout=10,check=True)
+ if shutil.which("ufw"):
+  status=subprocess.run(["ufw","status"],capture_output=True,text=True,timeout=10)
+  if "Status: active" in status.stdout:
+   subprocess.run(["ufw","allow",f"{port}/{'udp' if protocol in {'wireguard','amneziawg'} else 'tcp'}"],capture_output=True,text=True,timeout=10,check=True)
+ if shutil.which("firewall-cmd"):
+  state=subprocess.run(["firewall-cmd","--state"],capture_output=True,text=True,timeout=10)
+  if state.returncode==0:
+   proto="udp" if protocol in {"wireguard","amneziawg"} else "tcp"
+   subprocess.run(["firewall-cmd","--permanent","--add-port",f"{port}/{proto}"],capture_output=True,text=True,timeout=10,check=True)
+   subprocess.run(["firewall-cmd","--reload"],capture_output=True,text=True,timeout=10,check=True)
+ if shutil.which("netfilter-persistent"):
+  subprocess.run(["netfilter-persistent","save"],capture_output=True,text=True,timeout=20)
 def validate_config(data):
  safe_interface(data.interface)
  if data.protocol not in {"wireguard","amneziawg","openvpn"} or "\x00" in data.config:raise HTTPException(400,"Invalid configuration")
@@ -83,21 +103,6 @@ def apply(data:ApplyConfig,x_agent_token:str|None=Header(default=None)):
     subprocess.run([tool,"up",path],capture_output=True,text=True,timeout=20,check=True)
    if data.protocol=="wireguard":
     if shutil.which("sysctl"): subprocess.run(["sysctl","-w","net.ipv4.ip_forward=1"],capture_output=True,text=True,timeout=10,check=True)
-    port_match=re.search(r"(?m)^ListenPort\s*=\s*(\d+)",data.config)
-    if not port_match: raise RuntimeError("WireGuard ListenPort is missing")
-    listen_port=int(port_match.group(1))
-    if shutil.which("iptables"):
-     check=subprocess.run(["iptables","-C","INPUT","-p","udp","--dport",str(listen_port),"-j","ACCEPT"],capture_output=True,text=True,timeout=10)
-     if check.returncode:
-      subprocess.run(["iptables","-I","INPUT","-p","udp","--dport",str(listen_port),"-j","ACCEPT"],capture_output=True,text=True,timeout=10,check=True)
-    if shutil.which("ip6tables"):
-     check=subprocess.run(["ip6tables","-C","INPUT","-p","udp","--dport",str(listen_port),"-j","ACCEPT"],capture_output=True,text=True,timeout=10)
-     if check.returncode:
-      subprocess.run(["ip6tables","-I","INPUT","-p","udp","--dport",str(listen_port),"-j","ACCEPT"],capture_output=True,text=True,timeout=10,check=True)
-    if shutil.which("netfilter-persistent"):
-     subprocess.run(["netfilter-persistent","save"],capture_output=True,text=True,timeout=15)
-    live=subprocess.run(["wg","show",name,"listen-port"],capture_output=True,text=True,timeout=10,check=True).stdout.strip()
-    if live != str(listen_port): raise RuntimeError(f"WireGuard listener mismatch: configured={listen_port} live={live}")
     if shutil.which("iptables"):
      out=subprocess.run(["ip","route","show","default"],capture_output=True,text=True,timeout=10,check=True).stdout.split()
      if out:
@@ -122,6 +127,7 @@ def apply(data:ApplyConfig,x_agent_token:str|None=Header(default=None)):
         port_match=re.search(r"(?m)^ListenPort\s*=\s*(\d+)",data.config)
         if port_match:
          listen_port=port_match.group(1)
+         allow_input_port(listen_port,"wireguard")
          if shutil.which("ufw") and "active" in subprocess.run(["ufw","status"],capture_output=True,text=True,timeout=10).stdout.lower():
           subprocess.run(["ufw","allow",f"{listen_port}/udp"],capture_output=True,text=True,timeout=10,check=True)
          if shutil.which("firewall-cmd") and subprocess.run(["firewall-cmd","--state"],capture_output=True,text=True,timeout=10).returncode==0:
@@ -131,7 +137,14 @@ def apply(data:ApplyConfig,x_agent_token:str|None=Header(default=None)):
    if not shutil.which("systemctl"):raise RuntimeError("systemctl unavailable")
    server_dir="/etc/openvpn/server";os.makedirs(server_dir,mode=0o700,exist_ok=True)
    server_conf=f"{server_dir}/{name}.conf";shutil.copy2(path,server_conf);os.chmod(server_conf,0o600)
-   p=subprocess.run(["systemctl","reload-or-restart",f"openvpn-server@{name}"],capture_output=True,text=True,timeout=30)
+   proto_match=re.search(r"(?m)^proto\\s+(udp|tcp)(?:-server)?\\s*$",data.config)
+   port_match=re.search(r"(?m)^port\\s+(\\d+)\\s*$",data.config)
+   if port_match:
+    allow_input_port(port_match.group(1),"openvpn")
+   subprocess.run(["systemctl","daemon-reload"],capture_output=True,text=True,timeout=10)
+   p=subprocess.run(["systemctl","enable",f"openvpn-server@{name}"],capture_output=True,text=True,timeout=20)
+   if p.returncode:raise RuntimeError(p.stderr.strip() or "OpenVPN enable failed")
+   p=subprocess.run(["systemctl","restart",f"openvpn-server@{name}"],capture_output=True,text=True,timeout=30)
    if p.returncode:raise RuntimeError(p.stderr.strip() or "OpenVPN restart failed")
   return {"applied":True,"protocol":data.protocol,"interface":data.interface}
  except HTTPException: raise
@@ -150,75 +163,98 @@ def apply(data:ApplyConfig,x_agent_token:str|None=Header(default=None)):
   except FileNotFoundError:pass
   raise HTTPException(502,f"Apply failed and previous configuration was restored: {e}")
 
-
-def _cmd(args, timeout=10):
- try:
-  p=subprocess.run(args,capture_output=True,text=True,timeout=timeout)
-  return p.returncode,p.stdout.strip(),p.stderr.strip()
- except Exception as e:
-  return 99,"",str(e)
+def _wg_dump(interface):
+ p=subprocess.run(["wg","show",interface,"dump"],capture_output=True,text=True,timeout=10)
+ if p.returncode!=0: raise RuntimeError(p.stderr.strip() or "wg dump failed")
+ rows=p.stdout.splitlines()
+ if not rows: raise RuntimeError("empty wg dump")
+ head=rows[0].split("\t")
+ peers=[]
+ for line in rows[1:]:
+  parts=line.split("\t")
+  if len(parts)>=8:
+   peers.append({"public_key":parts[0],"preshared_key_configured":parts[1] != "0000000000000000000000000000000000000000000000000000000000000000","endpoint":parts[2],"allowed_ips":parts[3],"last_handshake":int(parts[4]),"bytes_received":int(parts[5]),"bytes_sent":int(parts[6]),"persistent_keepalive":int(parts[7])})
+ return {"public_key":head[0],"private_key_present":head[1] != "(none)","listen_port":int(head[2]),"fwmark":head[3],"peers":peers}
 
 @app.get("/diagnostics/preflight")
-def preflight(x_agent_token:str|None=Header(default=None)):
+def diagnostics_preflight(x_agent_token:str|None=Header(default=None)):
  auth(x_agent_token,"read")
- checks=[];issues=[];obs={}
+ checks=[];issues=[]
  def check(name,ok,detail,critical=True):
-  item={"name":name,"ok":bool(ok),"detail":detail,"critical":bool(critical)}
+  item={"name":name,"ok":bool(ok),"detail":str(detail),"critical":bool(critical)}
   checks.append(item)
   if critical and not ok: issues.append(item)
- rc,out,err=_cmd(["systemctl","is-system-running"],5)
- check("systemd",rc==0 or out in {"degraded","running"},out or err,True)
- rc,out,err=_cmd(["python3","--version"],5);check("python3",rc==0,out or err,True)
- rc,out,err=_cmd(["openssl","version"],5);check("openssl",rc==0,out or err,True)
- rc,out,err=_cmd(["ip","route","show","default"],5)
- check("default route",rc==0 and bool(out),out or err,True)
+ def run(cmd,timeout=10):
+  try:
+   p=subprocess.run(cmd,capture_output=True,text=True,timeout=timeout)
+   return p.returncode,p.stdout.strip(),p.stderr.strip()
+  except Exception as e:return 99,"",str(e)
+ # SYSTEM
+ check("systemd",shutil.which("systemctl") is not None,"systemctl available")
+ check("python3",shutil.which("python3") is not None,"python3 available")
+ check("openssl",shutil.which("openssl") is not None,"openssl available")
+ check("ntp",os.path.exists("/run/systemd/timesync/synchronized") or (run(["timedatectl","show","-p","NTPSynchronized","--value"])[1]=="yes"),"clock synchronization detected",False)
+ # NETWORK
+ rc,default,_=run(["ip","route","show","default"])
+ check("default_route",rc==0 and bool(default)," ".join(default.split()) or "no default route")
  wan=""
- if out:
-  parts=out.split()
-  if "dev" in parts: wan=parts[parts.index("dev")+1]
- obs["default_route"]=out;obs["wan_interface"]=wan
- rc,out,err=_cmd(["ip","-4","addr","show","scope","global"],5)
- pub=""
- for line in out.splitlines():
-  m=re.search(r"inet\s+(\d+\.\d+\.\d+\.\d+)/",line)
-  if m and not m.group(1).startswith(("10.","192.168.","172.16.")): pub=m.group(1);break
- rc2,src,err2=_cmd(["ip","route","get","1.1.1.1"],5)
- m=re.search(r"\bsrc\s+(\d+\.\d+\.\d+\.\d+)",src)
- egress=m.group(1) if m else ""
- obs["public_ipv4"]=pub;obs["egress_source"]=egress
- check("egress source",bool(egress),egress or err2,True)
- rc,out,err=_cmd(["getent","hosts","api.ipify.org"],5);check("DNS resolution",rc==0 and bool(out),out or err,True)
- rc,out,err=_cmd(["curl","-4","-fsS","--max-time","10","https://api.ipify.org"],15);check("HTTPS egress",rc==0 and bool(out),out or err,True)
- rc,out,err=_cmd(["sysctl","-n","net.ipv4.ip_forward"],5);check("IPv4 forwarding",rc==0 and out=="1",out or err,True)
- rc,out,err=_cmd(["sysctl","-n","net.ipv4.conf.all.rp_filter"],5);check("rp_filter",rc==0 and out in {"0","2"},out or err,False)
- check("wg installed",bool(shutil.which("wg")),"wg" if shutil.which("wg") else "missing",True)
- check("wg-quick installed",bool(shutil.which("wg-quick")),"wg-quick" if shutil.which("wg-quick") else "missing",True)
- rc,out,err=_cmd(["modprobe","-n","wireguard"],5) if shutil.which("modprobe") else (1,"","modprobe missing")
- check("WireGuard kernel support",rc==0,out or err,False)
- fw=shutil.which("iptables") or shutil.which("nft")
- check("firewall tool",bool(fw),fw or "iptables/nft missing",True)
- rc,out,err=_cmd(["systemctl","is-active","primevpn-node-agent.service"],5)
- check("Node Agent service",rc==0 and out=="active",out or err,True)
- rc,out,err=_cmd(["ss","-ltnH"],5)
- agent_port=bool(out)
- check("TCP listeners available",rc==0, "listeners detected" if agent_port else "no listeners",False)
- wg_if=[]
- rc,out,err=_cmd(["wg","show","interfaces"],5)
- if rc==0: wg_if=out.split()
- obs["wireguard_interfaces"]=wg_if;obs["agent_service"]=out
- check("runtime WireGuard interfaces",True,",".join(wg_if) if wg_if else "none yet; allowed before first config",False)
- obs["client_traffic_verified"]=False
- obs["traffic_reason"]="No client/inbound runtime traffic was supplied; handshake and forwarding cannot be claimed yet."
+ m=re.search(r"\bdev\s+(\S+)",default)
+ if m:wan=m.group(1)
+ check("wan_interface",bool(wan),wan or "WAN interface not detected")
+ source_ip=""
+ if shutil.which("ip"):
+  rc,out,err=run(["ip","route","get","1.1.1.1"])
+  m=re.search(r"\bsrc\s+(\S+)",out);source_ip=m.group(1) if m else ""
+ check("egress_source",bool(source_ip),source_ip or "could not determine egress source IP")
+ rc,out,err=run(["getent","ahostsv4","example.com"])
+ check("dns_resolution",rc==0 and bool(out),"DNS resolution works" if rc==0 and out else (err or "DNS resolution failed"))
+ rc,out,err=run(["curl","-4","-fsS","--max-time","8","https://api.ipify.org"])
+ public_ip=out.strip()
+ check("https_egress",rc==0 and bool(public_ip),("public IPv4 "+public_ip) if public_ip else (err or "HTTPS egress failed"))
+ # KERNEL / FORWARDING
+ forwarding=open("/proc/sys/net/ipv4/ip_forward").read().strip() if os.path.exists("/proc/sys/net/ipv4/ip_forward") else "missing"
+ check("ipv4_forwarding",forwarding=="1","net.ipv4.ip_forward="+forwarding)
+ rp="/proc/sys/net/ipv4/conf/all/rp_filter"
+ rp_value=open(rp).read().strip() if os.path.exists(rp) else "missing"
+ check("rp_filter",rp_value in {"0","2"},"net.ipv4.conf.all.rp_filter="+rp_value,False)
+ # WIREGUARD
+ wg_ok=shutil.which("wg") is not None and shutil.which("wg-quick") is not None
+ check("wireguard_tools",wg_ok,"wg/wg-quick installed" if wg_ok else "wg and/or wg-quick missing")
+ rc,mods,_=run(["sh","-c","command -v modprobe >/dev/null && modprobe wireguard >/dev/null 2>&1; lsmod | grep '^wireguard ' || true"])
+ check("wireguard_kernel",rc==0 and ("wireguard" in mods or os.path.exists("/sys/module/wireguard")),"WireGuard kernel module available",False)
+ # FIREWALL
+ fw_tool=shutil.which("iptables") or shutil.which("nft")
+ check("firewall_tool",bool(fw_tool),str(fw_tool or "iptables/nft unavailable"))
+ rc,iptables,_=run(["iptables","-L","FORWARD","-n","-v"],10) if shutil.which("iptables") else (99,"","iptables missing")
+ check("forward_chain_readable",rc==0, "FORWARD chain readable" if rc==0 else (iptables or "unable to read FORWARD chain"),False)
+ # SERVICE
+ service_state=""
+ if shutil.which("systemctl"):
+  rc,service_state,_=run(["systemctl","is-active","primevpn-node-agent.service"])
+ check("agent_service",service_state=="active","Node Agent systemd service active" if service_state=="active" else "Node Agent service is not active")
+ rc,agent_port,_=run(["sh","-c","printf '%s\\n' \"$(grep '^PORT=' /etc/primevpn/agent.env 2>/dev/null | cut -d= -f2)\""])
+ check("agent_port",bool(agent_port),"Agent TCP port="+agent_port if agent_port else "Agent port not configured",False)
+ # Runtime interfaces are reported, but absence is not fatal before the panel applies a WireGuard inbound.
+ interfaces=[]
+ if shutil.which("wg"):
+  rc,out,err=run(["wg","show","interfaces"])
+  interfaces=out.split() if rc==0 else []
+ check("wireguard_runtime",bool(interfaces),"WireGuard runtime interfaces: "+(",".join(interfaces) if interfaces else "none"),False)
+ # Critical readiness means the node can be used; client traffic is deliberately NOT inferred here.
  ready=not issues
- return {"ready":ready,"checks":checks,"issues":issues,"observed":obs,
-         "traffic":{"client_traffic_verified":False,"reason":obs["traffic_reason"]},
-         "summary":"NODE READY: infrastructure baseline passed" if ready else "NODE PREFLIGHT FAILED"}
+ return {"ready":ready,"version":VERSION,"checks":checks,"issues":issues,
+         "observed":{"public_ipv4":public_ip or None,"egress_source":source_ip or None,"wan_interface":wan or None,
+                     "default_route":default or None,"forwarding":forwarding,"rp_filter":rp_value,
+                     "wireguard_interfaces":interfaces,"agent_service":service_state or None},
+         "traffic":{"client_traffic_verified":False,"reason":"No client/inbound runtime traffic was supplied to this preflight"},
+         "summary":"NODE READY: infrastructure baseline passed" if ready else "NODE NOT READY: critical preflight checks failed"}
 
 @app.get("/diagnostics/wireguard/{interface}/{port}")
 def wireguard_diagnostics(interface:str,port:int,x_agent_token:str|None=Header(default=None)):
  auth(x_agent_token,"read");safe_interface(interface)
  if port<1 or port>65535: raise HTTPException(400,"Invalid UDP port")
- listener=subprocess.run(["wg","show",interface,"listen-port"],capture_output=True,text=True,timeout=10) if shutil.which("wg") else None
+ try: runtime=_wg_dump(interface)
+ except Exception as e: runtime={"error":str(e),"public_key":None,"listen_port":None,"peers":[]}
  iptables_rules=[]
  if shutil.which("iptables"):
   p=subprocess.run(["iptables","-L","INPUT","-v","-n","-x"],capture_output=True,text=True,timeout=10)
@@ -230,7 +266,8 @@ def wireguard_diagnostics(interface:str,port:int,x_agent_token:str|None=Header(d
   for line in p.stdout.splitlines():
    if "udp" in line and str(port) in line: nft_lines.append(line.strip())
  route=subprocess.run(["ip","route","show","default"],capture_output=True,text=True,timeout=10) if shutil.which("ip") else None
- peer_count=0\n peer_details=[]\n if shutil.which("wg") and listener and listener.returncode==0:\n  dump=subprocess.run(["wg","show",interface,"dump"],capture_output=True,text=True,timeout=10)\n  if dump.returncode==0:\n   for line in dump.stdout.splitlines()[1:]:\n    c=line.split("\\t")\n    if len(c)>=8 and c[0]:\n     peer_count+=1\n     peer_details.append({"public_key":c[0],"endpoint":c[2],"last_handshake":int(c[4]),"bytes_received":int(c[5]),"bytes_sent":int(c[6])})\n return {"interface":interface,"configured_port":port,"live_port":(listener.stdout.strip() if listener and listener.returncode==0 else None),"peer_count":peer_count,"peers":peer_details,"iptables_input_matches":iptables_rules,"nft_udp_port_matches":nft_lines[:20],"default_route":(route.stdout.strip() if route and route.returncode==0 else None)}
+ return {"interface":interface,"configured_port":port,"live_port":runtime.get("listen_port"),"live_public_key":runtime.get("public_key"),"peer_count":len(runtime.get("peers",[])),"peers":runtime.get("peers",[]),"iptables_input_matches":iptables_rules,"nft_udp_port_matches":nft_lines[:20],"default_route":(route.stdout.strip() if route and route.returncode==0 else None),"runtime_error":runtime.get("error")}
+
 @app.get("/counters/wireguard/{interface}")
 def counters(interface:str,x_agent_token:str|None=Header(default=None)):
  auth(x_agent_token,"read");safe_interface(interface)
