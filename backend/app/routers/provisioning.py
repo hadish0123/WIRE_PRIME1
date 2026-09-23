@@ -9,7 +9,7 @@ from ..deps import current_admin, require_tenant_manager
 from ..models import Admin, Node, ProvisioningTask, NodeState, Inbound, InboundWireGuard, Client, ResourceState, Protocol
 from ..services.reconcile import desired_node_state
 from ..security import new_bootstrap_token, hash_token, create_agent_token, decode_agent_token, encrypt_secret
-from ..config import settings\nfrom ..services.credentials import wg_keypair\nfrom ..services.agent_client import apply as apply_agent\nfrom ..services.inbound_config import render_inbound\nfrom ..routers.credentials import issue as issue_client_credential
+from ..config import settings\nfrom ..services.credentials import wg_keypair\nfrom ..services.agent_client import apply as apply_agent, call as agent_call\nfrom ..services.inbound_config import render_inbound\nfrom ..routers.credentials import issue as issue_client_credential
 
 router = APIRouter()
 
@@ -214,6 +214,28 @@ def desired(node_id: str, admin: Admin = Depends(current_admin), db: Session = D
     n = db.query(Node).filter(Node.id == node_id, Node.tenant_id == admin.tenant_id).first()
     if not n: raise HTTPException(404, "Node not found")
     return desired_node_state(db, n)
+
+@router.get("/{node_id}/traffic-diagnostics")
+def traffic_diagnostics(node_id: str, admin: Admin = Depends(current_admin), db: Session = Depends(get_db)):
+    node=db.query(Node).filter(Node.id==node_id,Node.tenant_id==admin.tenant_id).first()
+    if not node: raise HTTPException(404,"Node not found")
+    inbound=db.query(Inbound).filter(Inbound.node_id==node.id,Inbound.tenant_id==node.tenant_id).order_by(Inbound.created_at.asc()).first()
+    if not inbound: return {"status":"NO_INBOUND","reason":"No inbound exists on this node yet."}
+    if inbound.protocol not in {Protocol.wireguard,Protocol.amneziawg}: return {"status":"UNSUPPORTED","reason":"Traffic diagnostics currently target the automatic WireGuard smoke test."}
+    try:
+        diag=agent_call(node,"GET",f"diagnostics/wireguard/{inbound.interface}/{inbound.listen_port}",None,15)
+        peers=diag.get("peers") or []
+        if not peers:
+            return {"status":"NO_PEER","inbound_id":inbound.id,"reason":"Inbound is installed, but no WireGuard peer is installed. Create/issue a client credential."}
+        active=[p for p in peers if int(p.get("last_handshake") or 0)>0]
+        if not active:
+            return {"status":"NO_HANDSHAKE","inbound_id":inbound.id,"peers":peers,"reason":"Peer is installed, but no client handshake has reached the Node. Check client activation, Endpoint IP/UDP port, and provider/cloud firewall UDP access."}
+        p=active[0]
+        if int(p.get("bytes_received") or 0)==0 and int(p.get("bytes_sent") or 0)==0:
+            return {"status":"HANDSHAKE_ONLY","inbound_id":inbound.id,"peer":p,"reason":"Handshake exists, but no client payload traffic has been observed yet. Open a website/ping from the client."}
+        return {"status":"TRAFFIC_DETECTED","inbound_id":inbound.id,"peer":p,"reason":"WireGuard handshake and peer RX/TX traffic are being observed."}
+    except Exception as exc:
+        return {"status":"DIAGNOSTICS_UNAVAILABLE","inbound_id":inbound.id,"reason":str(exc)}
 
 @router.get("/{node_id}/tasks")
 def tasks(node_id: str, admin: Admin = Depends(current_admin), db: Session = Depends(get_db)):
