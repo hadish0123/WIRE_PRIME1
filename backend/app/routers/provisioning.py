@@ -9,7 +9,11 @@ from ..deps import current_admin, require_tenant_manager
 from ..models import Admin, Node, ProvisioningTask, NodeState, Inbound, InboundWireGuard, Client, ResourceState, Protocol
 from ..services.reconcile import desired_node_state
 from ..security import new_bootstrap_token, hash_token, create_agent_token, decode_agent_token, encrypt_secret
-from ..config import settings\nfrom ..services.credentials import wg_keypair\nfrom ..services.agent_client import apply as apply_agent, call as agent_call\nfrom ..services.inbound_config import render_inbound\nfrom ..routers.credentials import issue as issue_client_credential
+from ..config import settings
+from ..services.credentials import wg_keypair
+from ..services.agent_client import apply as apply_agent, call as agent_call
+from ..services.inbound_config import render_inbound
+from ..routers.credentials import issue as issue_client_credential
 
 router = APIRouter()
 
