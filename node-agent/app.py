@@ -3,7 +3,7 @@ from datetime import datetime,timezone
 from fastapi import FastAPI,Header,HTTPException
 from pydantic import BaseModel,Field
 from agent_security import verify_control_token,require_scope
-VERSION="100.0.3" # VPN firewall, listener and path diagnostics
+VERSION="100.0.4" # hardened node preflight and WireGuard runtime diagnostics
 
 app=FastAPI(title="PRIMEVPN Node Agent",version=VERSION)
 class ApplyConfig(BaseModel):
@@ -163,11 +163,47 @@ def apply(data:ApplyConfig,x_agent_token:str|None=Header(default=None)):
   except FileNotFoundError:pass
   raise HTTPException(502,f"Apply failed and previous configuration was restored: {e}")
 
+def _wg_dump(interface):
+ p=subprocess.run(["wg","show",interface,"dump"],capture_output=True,text=True,timeout=10)
+ if p.returncode!=0: raise RuntimeError(p.stderr.strip() or "wg dump failed")
+ rows=p.stdout.splitlines()
+ if not rows: raise RuntimeError("empty wg dump")
+ head=rows[0].split("\t")
+ peers=[]
+ for line in rows[1:]:
+  parts=line.split("\t")
+  if len(parts)>=8:
+   peers.append({"public_key":parts[0],"preshared_key_configured":parts[1] != "0000000000000000000000000000000000000000000000000000000000000000","endpoint":parts[2],"allowed_ips":parts[3],"last_handshake":int(parts[4]),"bytes_received":int(parts[5]),"bytes_sent":int(parts[6]),"persistent_keepalive":int(parts[7])})
+ return {"public_key":head[0],"private_key_present":head[1] != "(none)","listen_port":int(head[2]),"fwmark":head[3],"peers":peers}
+
+@app.get("/diagnostics/preflight")
+def diagnostics_preflight(x_agent_token:str|None=Header(default=None)):
+ auth(x_agent_token,"read")
+ checks=[];issues=[]
+ def check(name,ok,detail):
+  item={"name":name,"ok":bool(ok),"detail":detail};checks.append(item)
+  if not ok: issues.append(item)
+ check("wireguard_tools",shutil.which("wg") is not None and shutil.which("wg-quick") is not None,"wg/wg-quick installed")
+ check("iproute2",shutil.which("ip") is not None,"ip command available")
+ check("iptables_or_nft",shutil.which("iptables") is not None or shutil.which("nft") is not None,"firewall tooling available")
+ ipf="/proc/sys/net/ipv4/ip_forward"
+ forwarding=open(ipf).read().strip() if os.path.exists(ipf) else "missing"
+ check("ipv4_forwarding",forwarding=="1",f"net.ipv4.ip_forward={forwarding}")
+ default_route=subprocess.run(["ip","route","show","default"],capture_output=True,text=True,timeout=10).stdout.strip() if shutil.which("ip") else ""
+ check("default_route",bool(default_route),default_route or "no default route")
+ source_ip=""
+ if shutil.which("ip"):
+  p=subprocess.run(["ip","route","get","1.1.1.1"],capture_output=True,text=True,timeout=10)
+  m=re.search(r"\bsrc\s+(\S+)",p.stdout); source_ip=m.group(1) if m else ""
+ check("egress_source",bool(source_ip),source_ip or "could not determine egress source IP")
+ return {"ready":not issues,"version":VERSION,"checks":checks,"issues":issues,"observed_source_ip":source_ip}
+
 @app.get("/diagnostics/wireguard/{interface}/{port}")
 def wireguard_diagnostics(interface:str,port:int,x_agent_token:str|None=Header(default=None)):
  auth(x_agent_token,"read");safe_interface(interface)
  if port<1 or port>65535: raise HTTPException(400,"Invalid UDP port")
- listener=subprocess.run(["wg","show",interface,"listen-port"],capture_output=True,text=True,timeout=10) if shutil.which("wg") else None
+ try: runtime=_wg_dump(interface)
+ except Exception as e: runtime={"error":str(e),"public_key":None,"listen_port":None,"peers":[]}
  iptables_rules=[]
  if shutil.which("iptables"):
   p=subprocess.run(["iptables","-L","INPUT","-v","-n","-x"],capture_output=True,text=True,timeout=10)
@@ -179,24 +215,7 @@ def wireguard_diagnostics(interface:str,port:int,x_agent_token:str|None=Header(d
   for line in p.stdout.splitlines():
    if "udp" in line and str(port) in line: nft_lines.append(line.strip())
  route=subprocess.run(["ip","route","show","default"],capture_output=True,text=True,timeout=10) if shutil.which("ip") else None
- public_key=None
- if shutil.which("wg"):
-  public_key=subprocess.run(["wg","show",interface,"public-key"],capture_output=True,text=True,timeout=10)
-  if not public_key or public_key.returncode!=0 or not public_key.stdout.strip():
-   conf=subprocess.run(["wg","showconf",interface],capture_output=True,text=True,timeout=10)
-   if conf.returncode==0:
-    private_match=re.search(r"(?m)^PrivateKey\\s*=\\s*([^\\n]+)$",conf.stdout)
-    if private_match:
-     derived=subprocess.run(["wg","pubkey"],input=private_match.group(1).strip()+"\\n",capture_output=True,text=True,timeout=10)
-     if derived.returncode==0: public_key=derived
- peer_dump=subprocess.run(["wg","show",interface,"dump"],capture_output=True,text=True,timeout=10) if shutil.which("wg") else None
- peers=[]
- if peer_dump and peer_dump.returncode==0:
-  for line in peer_dump.stdout.splitlines()[1:]:
-   parts=line.split("\t")
-   if len(parts)>=8:
-    peers.append({"public_key":parts[0],"allowed_ips":parts[3],"endpoint":parts[2],"last_handshake":int(parts[4]),"bytes_received":int(parts[5]),"bytes_sent":int(parts[6])})
- return {"interface":interface,"configured_port":port,"live_port":(listener.stdout.strip() if listener and listener.returncode==0 else None),"live_public_key":(public_key.stdout.strip() if public_key and public_key.returncode==0 else None),"peer_count":len(peers),"peers":peers,"iptables_input_matches":iptables_rules,"nft_udp_port_matches":nft_lines[:20],"default_route":(route.stdout.strip() if route and route.returncode==0 else None)}
+ return {"interface":interface,"configured_port":port,"live_port":runtime.get("listen_port"),"live_public_key":runtime.get("public_key"),"peer_count":len(runtime.get("peers",[])),"peers":runtime.get("peers",[]),"iptables_input_matches":iptables_rules,"nft_udp_port_matches":nft_lines[:20],"default_route":(route.stdout.strip() if route and route.returncode==0 else None),"runtime_error":runtime.get("error")}
 
 @app.get("/counters/wireguard/{interface}")
 def counters(interface:str,x_agent_token:str|None=Header(default=None)):
