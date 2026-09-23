@@ -24,7 +24,7 @@ def call(node,method,path,payload=None,timeout=30):
 
 def _listen_port(config):
     import re
-    m=re.search(r"(?m)^ListenPort\\s*=\\s*(\\d+)\\s*$",config)
+    m=re.search(r"(?m)^ListenPort\s*=\s*(\d+)\s*$",config)
     if not m: raise RuntimeError("WireGuard ListenPort missing from rendered configuration")
     return int(m.group(1))
 
