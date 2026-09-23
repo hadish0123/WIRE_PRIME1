@@ -180,23 +180,74 @@ def _wg_dump(interface):
 def diagnostics_preflight(x_agent_token:str|None=Header(default=None)):
  auth(x_agent_token,"read")
  checks=[];issues=[]
- def check(name,ok,detail):
-  item={"name":name,"ok":bool(ok),"detail":detail};checks.append(item)
-  if not ok: issues.append(item)
- check("wireguard_tools",shutil.which("wg") is not None and shutil.which("wg-quick") is not None,"wg/wg-quick installed")
- check("iproute2",shutil.which("ip") is not None,"ip command available")
- check("iptables_or_nft",shutil.which("iptables") is not None or shutil.which("nft") is not None,"firewall tooling available")
- ipf="/proc/sys/net/ipv4/ip_forward"
- forwarding=open(ipf).read().strip() if os.path.exists(ipf) else "missing"
- check("ipv4_forwarding",forwarding=="1",f"net.ipv4.ip_forward={forwarding}")
- default_route=subprocess.run(["ip","route","show","default"],capture_output=True,text=True,timeout=10).stdout.strip() if shutil.which("ip") else ""
- check("default_route",bool(default_route),default_route or "no default route")
+ def check(name,ok,detail,critical=True):
+  item={"name":name,"ok":bool(ok),"detail":str(detail),"critical":bool(critical)}
+  checks.append(item)
+  if critical and not ok: issues.append(item)
+ def run(cmd,timeout=10):
+  try:
+   p=subprocess.run(cmd,capture_output=True,text=True,timeout=timeout)
+   return p.returncode,p.stdout.strip(),p.stderr.strip()
+  except Exception as e:return 99,"",str(e)
+ # SYSTEM
+ check("systemd",shutil.which("systemctl") is not None,"systemctl available")
+ check("python3",shutil.which("python3") is not None,"python3 available")
+ check("openssl",shutil.which("openssl") is not None,"openssl available")
+ check("ntp",os.path.exists("/run/systemd/timesync/synchronized") or (run(["timedatectl","show","-p","NTPSynchronized","--value"])[1]=="yes"),"clock synchronization detected",False)
+ # NETWORK
+ rc,default,_=run(["ip","route","show","default"])
+ check("default_route",rc==0 and bool(default)," ".join(default.split()) or "no default route")
+ wan=""
+ m=re.search(r"\bdev\s+(\S+)",default)
+ if m:wan=m.group(1)
+ check("wan_interface",bool(wan),wan or "WAN interface not detected")
  source_ip=""
  if shutil.which("ip"):
-  p=subprocess.run(["ip","route","get","1.1.1.1"],capture_output=True,text=True,timeout=10)
-  m=re.search(r"\bsrc\s+(\S+)",p.stdout); source_ip=m.group(1) if m else ""
+  rc,out,err=run(["ip","route","get","1.1.1.1"])
+  m=re.search(r"\bsrc\s+(\S+)",out);source_ip=m.group(1) if m else ""
  check("egress_source",bool(source_ip),source_ip or "could not determine egress source IP")
- return {"ready":not issues,"version":VERSION,"checks":checks,"issues":issues,"observed_source_ip":source_ip}
+ rc,out,err=run(["getent","ahostsv4","example.com"])
+ check("dns_resolution",rc==0 and bool(out),"DNS resolution works" if rc==0 and out else (err or "DNS resolution failed"))
+ rc,out,err=run(["curl","-4","-fsS","--max-time","8","https://api.ipify.org"])
+ public_ip=out.strip()
+ check("https_egress",rc==0 and bool(public_ip),("public IPv4 "+public_ip) if public_ip else (err or "HTTPS egress failed"))
+ # KERNEL / FORWARDING
+ forwarding=open("/proc/sys/net/ipv4/ip_forward").read().strip() if os.path.exists("/proc/sys/net/ipv4/ip_forward") else "missing"
+ check("ipv4_forwarding",forwarding=="1","net.ipv4.ip_forward="+forwarding)
+ rp="/proc/sys/net/ipv4/conf/all/rp_filter"
+ rp_value=open(rp).read().strip() if os.path.exists(rp) else "missing"
+ check("rp_filter",rp_value in {"0","2"},"net.ipv4.conf.all.rp_filter="+rp_value,False)
+ # WIREGUARD
+ wg_ok=shutil.which("wg") is not None and shutil.which("wg-quick") is not None
+ check("wireguard_tools",wg_ok,"wg/wg-quick installed" if wg_ok else "wg and/or wg-quick missing")
+ rc,mods,_=run(["sh","-c","command -v modprobe >/dev/null && modprobe wireguard >/dev/null 2>&1; lsmod | grep '^wireguard ' || true"])
+ check("wireguard_kernel",rc==0 and ("wireguard" in mods or os.path.exists("/sys/module/wireguard")),"WireGuard kernel module available",False)
+ # FIREWALL
+ fw_tool=shutil.which("iptables") or shutil.which("nft")
+ check("firewall_tool",bool(fw_tool),str(fw_tool or "iptables/nft unavailable"))
+ rc,iptables,_=run(["iptables","-L","FORWARD","-n","-v"],10) if shutil.which("iptables") else (99,"","iptables missing")
+ check("forward_chain_readable",rc==0, "FORWARD chain readable" if rc==0 else (iptables or "unable to read FORWARD chain"),False)
+ # SERVICE
+ service_state=""
+ if shutil.which("systemctl"):
+  rc,service_state,_=run(["systemctl","is-active","primevpn-node-agent.service"])
+ check("agent_service",service_state=="active","Node Agent systemd service active" if service_state=="active" else "Node Agent service is not active")
+ rc,agent_port,_=run(["sh","-c","printf '%s\\n' \"$(grep '^PORT=' /etc/primevpn/agent.env 2>/dev/null | cut -d= -f2)\""])
+ check("agent_port",bool(agent_port),"Agent TCP port="+agent_port if agent_port else "Agent port not configured",False)
+ # Runtime interfaces are reported, but absence is not fatal before the panel applies a WireGuard inbound.
+ interfaces=[]
+ if shutil.which("wg"):
+  rc,out,err=run(["wg","show","interfaces"])
+  interfaces=out.split() if rc==0 else []
+ check("wireguard_runtime",bool(interfaces),"WireGuard runtime interfaces: "+(",".join(interfaces) if interfaces else "none"),False)
+ # Critical readiness means the node can be used; client traffic is deliberately NOT inferred here.
+ ready=not issues
+ return {"ready":ready,"version":VERSION,"checks":checks,"issues":issues,
+         "observed":{"public_ipv4":public_ip or None,"egress_source":source_ip or None,"wan_interface":wan or None,
+                     "default_route":default or None,"forwarding":forwarding,"rp_filter":rp_value,
+                     "wireguard_interfaces":interfaces,"agent_service":service_state or None},
+         "traffic":{"client_traffic_verified":False,"reason":"No client/inbound runtime traffic was supplied to this preflight"},
+         "summary":"NODE READY: infrastructure baseline passed" if ready else "NODE NOT READY: critical preflight checks failed"}
 
 @app.get("/diagnostics/wireguard/{interface}/{port}")
 def wireguard_diagnostics(interface:str,port:int,x_agent_token:str|None=Header(default=None)):
