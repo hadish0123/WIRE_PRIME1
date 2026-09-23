@@ -179,6 +179,8 @@ def wireguard_diagnostics(interface:str,port:int,x_agent_token:str|None=Header(d
   for line in p.stdout.splitlines():
    if "udp" in line and str(port) in line: nft_lines.append(line.strip())
  route=subprocess.run(["ip","route","show","default"],capture_output=True,text=True,timeout=10) if shutil.which("ip") else None
+ public_key=subprocess.run(["wg","show",interface,"public-key"],capture_output=True,text=True,timeout=10) if shutil.which("wg") else None
+ peer_dump=subprocess.run(["wg","show",interface,"dump"],capture_output=True,text=True,timeout=10) if shutil.which("wg") else None
  peers=[]
  if peer_dump and peer_dump.returncode==0:
   for line in peer_dump.stdout.splitlines()[1:]:
