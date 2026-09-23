@@ -3,7 +3,7 @@ from datetime import datetime,timezone
 from fastapi import FastAPI,Header,HTTPException
 from pydantic import BaseModel,Field
 from agent_security import verify_control_token,require_scope
-VERSION="100.0.2" # VPN firewall and listener verification
+VERSION="100.0.5" # full infrastructure preflight and WireGuard diagnostics
 
 app=FastAPI(title="PRIMEVPN Node Agent",version=VERSION)
 class ApplyConfig(BaseModel):
@@ -149,6 +149,70 @@ def apply(data:ApplyConfig,x_agent_token:str|None=Header(default=None)):
   try:os.unlink(tmp)
   except FileNotFoundError:pass
   raise HTTPException(502,f"Apply failed and previous configuration was restored: {e}")
+
+
+def _cmd(args, timeout=10):
+ try:
+  p=subprocess.run(args,capture_output=True,text=True,timeout=timeout)
+  return p.returncode,p.stdout.strip(),p.stderr.strip()
+ except Exception as e:
+  return 99,"",str(e)
+
+@app.get("/diagnostics/preflight")
+def preflight(x_agent_token:str|None=Header(default=None)):
+ auth(x_agent_token,"read")
+ checks=[];issues=[];obs={}
+ def check(name,ok,detail,critical=True):
+  item={"name":name,"ok":bool(ok),"detail":detail,"critical":bool(critical)}
+  checks.append(item)
+  if critical and not ok: issues.append(item)
+ rc,out,err=_cmd(["systemctl","is-system-running"],5)
+ check("systemd",rc==0 or out in {"degraded","running"},out or err,True)
+ rc,out,err=_cmd(["python3","--version"],5);check("python3",rc==0,out or err,True)
+ rc,out,err=_cmd(["openssl","version"],5);check("openssl",rc==0,out or err,True)
+ rc,out,err=_cmd(["ip","route","show","default"],5)
+ check("default route",rc==0 and bool(out),out or err,True)
+ wan=""
+ if out:
+  parts=out.split()
+  if "dev" in parts: wan=parts[parts.index("dev")+1]
+ obs["default_route"]=out;obs["wan_interface"]=wan
+ rc,out,err=_cmd(["ip","-4","addr","show","scope","global"],5)
+ pub=""
+ for line in out.splitlines():
+  m=re.search(r"inet\s+(\d+\.\d+\.\d+\.\d+)/",line)
+  if m and not m.group(1).startswith(("10.","192.168.","172.16.")): pub=m.group(1);break
+ rc2,src,err2=_cmd(["ip","route","get","1.1.1.1"],5)
+ m=re.search(r"\bsrc\s+(\d+\.\d+\.\d+\.\d+)",src)
+ egress=m.group(1) if m else ""
+ obs["public_ipv4"]=pub;obs["egress_source"]=egress
+ check("egress source",bool(egress),egress or err2,True)
+ rc,out,err=_cmd(["getent","hosts","api.ipify.org"],5);check("DNS resolution",rc==0 and bool(out),out or err,True)
+ rc,out,err=_cmd(["curl","-4","-fsS","--max-time","10","https://api.ipify.org"],15);check("HTTPS egress",rc==0 and bool(out),out or err,True)
+ rc,out,err=_cmd(["sysctl","-n","net.ipv4.ip_forward"],5);check("IPv4 forwarding",rc==0 and out=="1",out or err,True)
+ rc,out,err=_cmd(["sysctl","-n","net.ipv4.conf.all.rp_filter"],5);check("rp_filter",rc==0 and out in {"0","2"},out or err,False)
+ check("wg installed",bool(shutil.which("wg")),"wg" if shutil.which("wg") else "missing",True)
+ check("wg-quick installed",bool(shutil.which("wg-quick")),"wg-quick" if shutil.which("wg-quick") else "missing",True)
+ rc,out,err=_cmd(["modprobe","-n","wireguard"],5) if shutil.which("modprobe") else (1,"","modprobe missing")
+ check("WireGuard kernel support",rc==0,out or err,False)
+ fw=shutil.which("iptables") or shutil.which("nft")
+ check("firewall tool",bool(fw),fw or "iptables/nft missing",True)
+ rc,out,err=_cmd(["systemctl","is-active","primevpn-node-agent.service"],5)
+ check("Node Agent service",rc==0 and out=="active",out or err,True)
+ rc,out,err=_cmd(["ss","-ltnH"],5)
+ agent_port=bool(out)
+ check("TCP listeners available",rc==0, "listeners detected" if agent_port else "no listeners",False)
+ wg_if=[]
+ rc,out,err=_cmd(["wg","show","interfaces"],5)
+ if rc==0: wg_if=out.split()
+ obs["wireguard_interfaces"]=wg_if;obs["agent_service"]=out
+ check("runtime WireGuard interfaces",True,",".join(wg_if) if wg_if else "none yet; allowed before first config",False)
+ obs["client_traffic_verified"]=False
+ obs["traffic_reason"]="No client/inbound runtime traffic was supplied; handshake and forwarding cannot be claimed yet."
+ ready=not issues
+ return {"ready":ready,"checks":checks,"issues":issues,"observed":obs,
+         "traffic":{"client_traffic_verified":False,"reason":obs["traffic_reason"]},
+         "summary":"NODE READY: infrastructure baseline passed" if ready else "NODE PREFLIGHT FAILED"}
 
 @app.get("/diagnostics/wireguard/{interface}/{port}")
 def wireguard_diagnostics(interface:str,port:int,x_agent_token:str|None=Header(default=None)):
