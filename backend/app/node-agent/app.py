@@ -199,9 +199,22 @@ def wireguard_smoke(data:WireGuardSmoke,x_agent_token:str|None=Header(default=No
    subprocess.run(["ip","addr","add",str(addr),"dev","wg-smoke"],capture_output=True,text=True,timeout=10,check=True)
    subprocess.run(["wg","set","wg-smoke","private-key",private_path,"peer",data.server_public_key.strip(),"allowed-ips","0.0.0.0/0","endpoint",data.endpoint,"persistent-keepalive","1"],capture_output=True,text=True,timeout=10,check=True)
    subprocess.run(["ip","link","set","wg-smoke","up"],capture_output=True,text=True,timeout=10,check=True)
+   endpoint_host=data.endpoint.rsplit(":",1)[0]
+   endpoint_ip=ipaddress.ip_address(endpoint_host)
+   route_to_endpoint=subprocess.run(["ip","route","get",str(endpoint_ip)],capture_output=True,text=True,timeout=10,check=True).stdout
+   main_route=route_to_endpoint.splitlines()[0].split()
+   endpoint_dev=main_route[main_route.index("dev")+1] if "dev" in main_route else ""
+   endpoint_src=main_route[main_route.index("src")+1] if "src" in main_route else ""
+   if not endpoint_dev: raise RuntimeError("Could not determine Node route to WireGuard endpoint")
    subprocess.run(["ip","route","replace","127.0.0.1/32","dev","lo","table","51820"],capture_output=True,text=True,timeout=10,check=True)
+   if endpoint_src:
+    subprocess.run(["ip","route","replace",f"{endpoint_ip}/32","via",main_route[main_route.index("via")+1],"dev",endpoint_dev,"src",endpoint_src,"table","51820"],capture_output=True,text=True,timeout=10,check=True) if "via" in main_route else subprocess.run(["ip","route","replace",f"{endpoint_ip}/32","dev",endpoint_dev,"src",endpoint_src,"table","51820"],capture_output=True,text=True,timeout=10,check=True)
+   else:
+    subprocess.run(["ip","route","replace",f"{endpoint_ip}/32","dev",endpoint_dev,"table","51820"],capture_output=True,text=True,timeout=10,check=True)
    subprocess.run(["ip","route","replace","default","dev","wg-smoke","table","51820"],capture_output=True,text=True,timeout=10,check=True)
    subprocess.run(["ip","rule","add","priority","100","from",f"{addr.ip}/32","table","51820"],capture_output=True,text=True,timeout=10)
+   route_check=subprocess.run(["ip","route","get","1.1.1.1","from",str(addr.ip)],capture_output=True,text=True,timeout=10)
+   if route_check.returncode!=0: raise RuntimeError("Smoke client policy route failed: "+(route_check.stderr.strip() or route_check.stdout.strip()))
    handshake=0
    for _ in range(20):
     p=subprocess.run(["wg","show","wg-smoke","latest-handshakes"],capture_output=True,text=True,timeout=5,check=True)
@@ -212,8 +225,6 @@ def wireguard_smoke(data:WireGuardSmoke,x_agent_token:str|None=Header(default=No
    if not handshake: raise RuntimeError("Smoke client handshake did not complete")
    p=subprocess.run(["wg","show","wg-smoke","transfer"],capture_output=True,text=True,timeout=5,check=True)
    parts=p.stdout.split(); before_rx=int(parts[1]) if len(parts)>=2 else 0; before_tx=int(parts[2]) if len(parts)>=3 else 0
-   route_check=subprocess.run(["ip","route","get","1.1.1.1","from",str(addr.ip)],capture_output=True,text=True,timeout=10)
-   if route_check.returncode!=0: raise RuntimeError("Smoke client policy route failed: "+(route_check.stderr.strip() or route_check.stdout.strip()))
    ping=subprocess.run(["ping","-4","-c","2","-W","3","-I","wg-smoke","1.1.1.1"],capture_output=True,text=True,timeout=10)
    curl=subprocess.run(["curl","-4","-fsS","--interface","wg-smoke","--max-time","10","https://api.ipify.org"],capture_output=True,text=True,timeout=15)
    p=subprocess.run(["wg","show","wg-smoke","transfer"],capture_output=True,text=True,timeout=5,check=True)
