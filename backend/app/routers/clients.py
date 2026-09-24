@@ -129,7 +129,7 @@ def delete_client(client_id:str,request:Request,admin:Admin=Depends(require_tena
  if inbound and node and node.agent_url and creds:
   try:
    if inbound.protocol in {Protocol.wireguard,Protocol.amneziawg}:
-    for cred in creds: revoke_wireguard_peer(node,inbound.interface,cred.public_identifier)
+    for cred in creds: revoke_wireguard_peer(node,inbound.interface,cred.public_identifier,inbound.protocol.value)
    elif inbound.protocol==Protocol.openvpn:
     ov=db.query(InboundOpenVPN).filter(InboundOpenVPN.inbound_id==inbound.id).first()
     if ov and ov.ca_key_encrypted and ov.ca_pem:
@@ -181,7 +181,7 @@ def revoke(client_id:str,request:Request,admin:Admin=Depends(require_tenant_mana
  if inbound and node and node.agent_url and creds:
   try:
    if inbound.protocol in {Protocol.wireguard,Protocol.amneziawg}:
-    for cred in creds: revoke_wireguard_peer(node,inbound.interface,cred.public_identifier)
+    for cred in creds: revoke_wireguard_peer(node,inbound.interface,cred.public_identifier,inbound.protocol.value)
    elif inbound.protocol==Protocol.openvpn:
     ov=db.query(InboundOpenVPN).filter(InboundOpenVPN.inbound_id==inbound.id).first()
     if ov and ov.ca_key_encrypted and ov.ca_pem:
