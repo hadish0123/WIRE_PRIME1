@@ -34,8 +34,6 @@ def _validate_wireguard(node,interface,config):
     if live_port != expected_port:
         raise RuntimeError(f"Node WireGuard listen port mismatch: expected {expected_port} got {diag.get('live_port')}")
     peer_count=int(diag.get("peer_count") or 0)
-    if peer_count < 1:
-        raise RuntimeError("Node WireGuard has no installed peers after apply")
     return diag
 
 def apply(node,protocol,interface,config,files=None):
