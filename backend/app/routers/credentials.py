@@ -77,7 +77,7 @@ def issue(client_id:str,admin:Admin=Depends(require_tenant_manager),db:Session=D
    awg_params=""
    if inbound.protocol==Protocol.amneziawg:
     awg_params=f"\nJc = 7\nJmin = 8\nJmax = 80\nS1 = {wg.amnezia_s1}\nS2 = {wg.amnezia_s2}\nS3 = {wg.amnezia_s3}\nS4 = {wg.amnezia_s4}\nH1 = {wg.amnezia_h1}\nH2 = {wg.amnezia_h2}\nH3 = {wg.amnezia_h3}\nH4 = {wg.amnezia_h4}"
-   payload=f"[Interface]\nPrivateKey = {material['private_key']}\nAddress = {device.assigned_address}\nDNS = {inbound.dns or '1.1.1.1'}{awg_params}\n\n[Peer]\nPublicKey = {wg.server_public_key}\nAllowedIPs = 0.0.0.0/0, ::/0\nEndpoint = {node.address}:{inbound.listen_port}\nPersistentKeepalive = 25\n"
+   payload=f"[Interface]\nPrivateKey = {material['private_key']}\nAddress = {device.assigned_address}\nDNS = {inbound.dns or '1.1.1.1'}{awg_params}\n\n[Peer]\nPublicKey = {wg.server_public_key}\nAllowedIPs = 0.0.0.0/0\nEndpoint = {node.address}:{inbound.listen_port}\nPersistentKeepalive = 25\n"
    rendered=render_inbound(inbound,node,db)
    creds=db.query(ClientCredential,Device).join(Device,Device.id==ClientCredential.device_id).join(Client,Client.id==ClientCredential.client_id).filter(Client.inbound_id==inbound.id,Client.tenant_id==c.tenant_id,ClientCredential.revoked_at.is_(None)).all()
    peers=[]
