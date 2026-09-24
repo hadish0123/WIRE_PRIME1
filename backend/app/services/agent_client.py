@@ -69,7 +69,8 @@ def _validate_wireguard(node,protocol,interface,config):
 
 def apply(node,protocol,interface,config,files=None):
     payload={"protocol":protocol,"interface":interface,"config":config,"files":files or {}}
-    result=call(node,"POST","apply",payload,60)
+    apply_timeout=600 if protocol=="amneziawg" else 60
+    result=call(node,"POST","apply",payload,apply_timeout)
     if protocol in {"wireguard","amneziawg"}:
         try:
             _validate_wireguard(node,protocol,interface,config)
@@ -82,7 +83,7 @@ def apply(node,protocol,interface,config,files=None):
             # failure, not only HTTP 502 responses.
             try:
                 call(node,"POST","remove",{"protocol":protocol,"interface":interface},60)
-                retry_result=call(node,"POST","apply",payload,60)
+                retry_result=call(node,"POST","apply",payload,apply_timeout)
                 _validate_wireguard(node,protocol,interface,config)
                 return retry_result
             except Exception as retry_error:
