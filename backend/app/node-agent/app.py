@@ -3,7 +3,7 @@ from datetime import datetime,timezone
 from fastapi import FastAPI,Header,HTTPException
 from pydantic import BaseModel,Field
 from agent_security import verify_control_token,require_scope
-VERSION="100.0.11" # verify live routes and allow tunnel ping with reliable forwarding
+VERSION="100.0.12" # stable idempotent firewall sync with verified WireGuard routing
 
 app=FastAPI(title="PRIMEVPN Node Agent",version=VERSION)
 class WireGuardSmoke(BaseModel):
@@ -34,16 +34,18 @@ def allow_input_port(port,protocol):
   check=subprocess.run(["iptables","-C","INPUT","-p",proto,"--dport",port,"-j","ACCEPT"],capture_output=True,text=True,timeout=10)
   if check.returncode:
    subprocess.run(["iptables","-I","INPUT","-p",proto,"--dport",port,"-j","ACCEPT"],capture_output=True,text=True,timeout=10,check=True)
+ proto="udp" if protocol in {"wireguard","amneziawg"} else "tcp"
  if shutil.which("ufw"):
   status=subprocess.run(["ufw","status"],capture_output=True,text=True,timeout=10)
-  if "Status: active" in status.stdout:
-   subprocess.run(["ufw","allow",f"{port}/{'udp' if protocol in {'wireguard','amneziawg'} else 'tcp'}"],capture_output=True,text=True,timeout=10,check=True)
+  if "Status: active" in status.stdout and f"{port}/{proto}" not in status.stdout:
+   subprocess.run(["ufw","allow",f"{port}/{proto}"],capture_output=True,text=True,timeout=10,check=True)
  if shutil.which("firewall-cmd"):
   state=subprocess.run(["firewall-cmd","--state"],capture_output=True,text=True,timeout=10)
   if state.returncode==0:
-   proto="udp" if protocol in {"wireguard","amneziawg"} else "tcp"
-   subprocess.run(["firewall-cmd","--permanent","--add-port",f"{port}/{proto}"],capture_output=True,text=True,timeout=10,check=True)
-   subprocess.run(["firewall-cmd","--reload"],capture_output=True,text=True,timeout=10,check=True)
+   query=subprocess.run(["firewall-cmd","--permanent","--query-port",f"{port}/{proto}"],capture_output=True,text=True,timeout=10)
+   if query.returncode!=0:
+    subprocess.run(["firewall-cmd","--permanent","--add-port",f"{port}/{proto}"],capture_output=True,text=True,timeout=10,check=True)
+    subprocess.run(["firewall-cmd","--reload"],capture_output=True,text=True,timeout=10,check=True)
  if shutil.which("netfilter-persistent"):
   subprocess.run(["netfilter-persistent","save"],capture_output=True,text=True,timeout=20)
 def validate_config(data):
