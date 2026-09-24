@@ -3,7 +3,7 @@ from datetime import datetime,timezone
 from fastapi import FastAPI,Header,HTTPException
 from pydantic import BaseModel,Field
 from agent_security import verify_control_token,require_scope
-VERSION="100.0.5" # hardened node preflight and WireGuard runtime diagnostics
+VERSION="100.0.6" # persist forwarding/NAT rules and validate real WireGuard runtime
 
 app=FastAPI(title="PRIMEVPN Node Agent",version=VERSION)
 class WireGuardSmoke(BaseModel):
@@ -139,6 +139,14 @@ def apply(data:ApplyConfig,x_agent_token:str|None=Header(default=None)):
          if shutil.which("firewall-cmd") and subprocess.run(["firewall-cmd","--state"],capture_output=True,text=True,timeout=10).returncode==0:
           subprocess.run(["firewall-cmd","--permanent","--add-port",f"{listen_port}/udp"],capture_output=True,text=True,timeout=10,check=True)
           subprocess.run(["firewall-cmd","--reload"],capture_output=True,text=True,timeout=10,check=True)
+        # Persist forwarding/NAT after the inbound is created. The installer runs
+        # before an inbound exists, so saving only during installation loses these
+        # rules after a VPS reboot.
+        if shutil.which("netfilter-persistent"):
+         subprocess.run(["netfilter-persistent","save"],capture_output=True,text=True,timeout=20)
+        elif os.path.isdir("/etc/sysconfig") and shutil.which("iptables-save"):
+         with open("/etc/sysconfig/iptables","w",encoding="utf-8") as f:
+          subprocess.run(["iptables-save"],stdout=f,text=True,timeout=20,check=True)
   elif data.protocol=="openvpn":
    if not shutil.which("systemctl"):raise RuntimeError("systemctl unavailable")
    server_dir="/etc/openvpn/server";os.makedirs(server_dir,mode=0o700,exist_ok=True)
