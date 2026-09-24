@@ -239,11 +239,16 @@ CAPABILITIES="$(printf '%s' "$HEALTH" | python3 -c 'import json,sys; print(json.
 echo "[9/10] Registering Node and running automatic WireGuard smoke setup"
 REG_BODY="$(python3 -c 'import json,sys; print(json.dumps({"agent_url":sys.argv[1],"version":"100.0.5","capabilities":json.loads(sys.argv[2])},separators=(",",":")))' "$AGENT_URL" "$CAPABILITIES")"
 REG_TMP="$(mktemp)"
-REG_CODE="$(curl -kfsS --max-time 45 -o "$REG_TMP" -w '%{http_code}' -X POST "$BACKEND/api/v1/provisioning/$NODE_ID/register" \
+REG_CODE="$(curl -kS --max-time 60 -o "$REG_TMP" -w '%{http_code}' -X POST "$BACKEND/api/v1/provisioning/$NODE_ID/register" \
   -H "Authorization: Bearer $AGENT_TOKEN" -H 'Content-Type: application/json' --data "$REG_BODY" || true)"
 if [ "$REG_CODE" != "200" ]; then
   echo "NODE REGISTRATION FAILED: HTTP $REG_CODE"
+  echo "Registration response:"
   cat "$REG_TMP" 2>/dev/null || true
+  echo
+  echo "Node Agent runtime snapshot:"
+  curl -kfsS --max-time 15 "https://127.0.0.1:$PORT/health" -H "X-Agent-Token: $AGENT_TOKEN" 2>/dev/null || true
+  echo
   rm -f "$REG_TMP"
   exit 32
 fi
