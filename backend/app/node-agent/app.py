@@ -10,6 +10,7 @@ class WireGuardSmoke(BaseModel):
  client_private_key:str=Field(min_length=40,max_length=100)
  client_address:str=Field(min_length=7,max_length=64)
  server_public_key:str=Field(min_length=40,max_length=100)
+ endpoint:str=Field(min_length=3,max_length=255)
 
 class ApplyConfig(BaseModel):
  protocol:str
@@ -191,12 +192,12 @@ def wireguard_smoke(data:WireGuardSmoke,x_agent_token:str|None=Header(default=No
   if addr.version!=4: raise ValueError("Smoke test currently requires IPv4")
   private_path=tempfile.mktemp(prefix="primevpn-smoke-key-")
   try:
-   with open(private_path,"w",encoding="utf-8") as f:f.write(data.client_private_key.strip()+"\\n")
+   with open(private_path,"w",encoding="utf-8") as f:f.write(data.client_private_key.strip()+"\n")
    os.chmod(private_path,0o600)
    subprocess.run(["ip","link","del","wg-smoke"],capture_output=True,text=True,timeout=10)
    subprocess.run(["ip","link","add","wg-smoke","type","wireguard"],capture_output=True,text=True,timeout=10,check=True)
    subprocess.run(["ip","addr","add",str(addr),"dev","wg-smoke"],capture_output=True,text=True,timeout=10,check=True)
-   subprocess.run(["wg","set","wg-smoke","private-key",private_path,"peer",data.server_public_key.strip(),"allowed-ips","0.0.0.0/0","endpoint","127.0.0.1:443","persistent-keepalive","1"],capture_output=True,text=True,timeout=10,check=True)
+   subprocess.run(["wg","set","wg-smoke","private-key",private_path,"peer",data.server_public_key.strip(),"allowed-ips","0.0.0.0/0","endpoint",data.endpoint,"persistent-keepalive","1"],capture_output=True,text=True,timeout=10,check=True)
    subprocess.run(["ip","link","set","wg-smoke","up"],capture_output=True,text=True,timeout=10,check=True)
    subprocess.run(["ip","route","replace","127.0.0.1/32","dev","lo","table","51820"],capture_output=True,text=True,timeout=10,check=True)
    subprocess.run(["ip","route","replace","default","dev","wg-smoke","table","51820"],capture_output=True,text=True,timeout=10,check=True)
@@ -223,6 +224,7 @@ def wireguard_smoke(data:WireGuardSmoke,x_agent_token:str|None=Header(default=No
    subprocess.run(["ip","rule","del","priority","100","from",f"{addr.ip}/32","table","51820"],capture_output=True,text=True,timeout=10)
    subprocess.run(["ip","link","del","wg-smoke"],capture_output=True,text=True,timeout=10)
    subprocess.run(["ip","route","del","default","dev","wg-smoke","table","51820"],capture_output=True,text=True,timeout=10)
+   subprocess.run(["ip","route","del","127.0.0.1/32","dev","lo","table","51820"],capture_output=True,text=True,timeout=10)
    try: os.unlink(private_path)
    except FileNotFoundError: pass
  except subprocess.CalledProcessError as e:
