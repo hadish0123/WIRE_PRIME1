@@ -37,9 +37,9 @@ def _expected_wireguard(config):
             peers.append((public.group(1).strip(),allowed.group(1).strip() if allowed else ""))
     return expected_public,peers
 
-def _validate_wireguard(node,interface,config):
+def _validate_wireguard(node,protocol,interface,config):
     expected_port=_listen_port(config)
-    diag=call(node,"GET",f"diagnostics/wireguard/{interface}/{expected_port}",None,20)
+    diag=call(node,"GET",f"diagnostics/wireguard/{interface}/{expected_port}?protocol={protocol}",None,20)
     if diag.get("runtime_error"):
         raise RuntimeError("Node WireGuard runtime diagnostic failed: "+str(diag["runtime_error"]))
     live_port=int(diag.get("live_port") or 0)
@@ -70,9 +70,9 @@ def _validate_wireguard(node,interface,config):
 def apply(node,protocol,interface,config,files=None):
     payload={"protocol":protocol,"interface":interface,"config":config,"files":files or {}}
     result=call(node,"POST","apply",payload,60)
-    if protocol=="wireguard":
+    if protocol in {"wireguard","amneziawg"}:
         try:
-            _validate_wireguard(node,interface,config)
+            _validate_wireguard(node,protocol,interface,config)
             return result
         except Exception as first_error:
             # A stale wg0 runtime or a transient syncconf state must never make
@@ -83,14 +83,14 @@ def apply(node,protocol,interface,config,files=None):
             try:
                 call(node,"POST","remove",{"protocol":protocol,"interface":interface},60)
                 retry_result=call(node,"POST","apply",payload,60)
-                _validate_wireguard(node,interface,config)
+                _validate_wireguard(node,protocol,interface,config)
                 return retry_result
             except Exception as retry_error:
                 raise RuntimeError(f"{first_error}; clean re-apply failed: {retry_error}") from retry_error
     return result
 
-def revoke_wireguard_peer(node,interface,public_key):
-    return call(node,"POST","peers/revoke",{"interface":interface,"public_key":public_key})
+def revoke_wireguard_peer(node,interface,public_key,protocol="wireguard"):
+    return call(node,"POST","peers/revoke",{"interface":interface,"public_key":public_key,"protocol":protocol})
 
 def deploy_openvpn_crl(node,instance,crl_pem):
     return call(node,"POST","openvpn/crl",{"instance":instance,"crl_pem":crl_pem})
