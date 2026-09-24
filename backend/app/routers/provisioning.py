@@ -258,10 +258,10 @@ echo "[10/10] Final runtime validation"
 RUNTIME="$(curl -kfsS --max-time 15 "https://127.0.0.1:$PORT/health" -H "X-Agent-Token: $AGENT_TOKEN")"
 printf '%s' "$RUNTIME" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("status")=="READY"; assert d.get("capabilities",{}).get("wireguard") is True' >/dev/null
 
-cat > /usr/local/sbin/primevpn-node-refresh <<EOF
+cat > /usr/local/sbin/primevpn-node-refresh <<'REFRESH_EOF'
 #!/usr/bin/env bash
 set -Eeuo pipefail
-BACKEND="$BACKEND"
+BACKEND="__BACKEND__"
 BASE="/opt/primevpn-node-agent"
 TMP="$BASE/.refresh"
 mkdir -p "$TMP"
@@ -279,7 +279,8 @@ if [ "$changed" -eq 1 ]; then
   "$BASE/venv/bin/pip" install --no-cache-dir "fastapi>=0.115,<1" "uvicorn[standard]>=0.30,<1" "pydantic>=2.9,<3" "PyJWT[crypto]>=2.10,<3" "cryptography>=43,<47" >/dev/null
   systemctl restart primevpn-node-agent.service
 fi
-EOF
+REFRESH_EOF
+sed -i "s|__BACKEND__|$BACKEND|g" /usr/local/sbin/primevpn-node-refresh
 chmod 700 /usr/local/sbin/primevpn-node-refresh
 cat > /etc/systemd/system/primevpn-node-refresh.service <<'EOF'
 [Unit]
