@@ -3,7 +3,7 @@ from datetime import datetime,timezone
 from fastapi import FastAPI,Header,HTTPException
 from pydantic import BaseModel,Field
 from agent_security import verify_control_token,require_scope
-VERSION="100.0.6" # persist forwarding/NAT rules and validate real WireGuard runtime
+VERSION="100.0.7" # harden forwarding/NAT and external-client diagnostics
 
 app=FastAPI(title="PRIMEVPN Node Agent",version=VERSION)
 class WireGuardSmoke(BaseModel):
@@ -126,10 +126,10 @@ def apply(data:ApplyConfig,x_agent_token:str|None=Header(default=None)):
         for rule in rules:
          check=subprocess.run(rule,capture_output=True,text=True,timeout=10)
          if check.returncode:
-          subprocess.run([rule[0],"-A"]+rule[2:],capture_output=True,text=True,timeout=10,check=True)
+          subprocess.run([rule[0],"-I",rule[2],"1"]+rule[3:],capture_output=True,text=True,timeout=10,check=True)
         check=subprocess.run(["iptables","-t","nat","-C","POSTROUTING","-s",str(net),"-o",wan,"-j","MASQUERADE"],capture_output=True,text=True,timeout=10)
         if check.returncode:
-         subprocess.run(["iptables","-t","nat","-A","POSTROUTING","-s",str(net),"-o",wan,"-j","MASQUERADE"],capture_output=True,text=True,timeout=10,check=True)
+         subprocess.run(["iptables","-t","nat","-I","POSTROUTING","1","-s",str(net),"-o",wan,"-j","MASQUERADE"],capture_output=True,text=True,timeout=10,check=True)
         port_match=re.search(r"(?m)^ListenPort\s*=\s*(\d+)",data.config)
         if port_match:
          listen_port=port_match.group(1)
@@ -340,18 +340,22 @@ def wireguard_diagnostics(interface:str,port:int,x_agent_token:str|None=Header(d
  if port<1 or port>65535: raise HTTPException(400,"Invalid UDP port")
  try: runtime=_wg_dump(interface)
  except Exception as e: runtime={"error":str(e),"public_key":None,"listen_port":None,"peers":[]}
- iptables_rules=[]
+ iptables_rules=[];forward_rules=[];nat_rules=[]
  if shutil.which("iptables"):
   p=subprocess.run(["iptables","-L","INPUT","-v","-n","-x"],capture_output=True,text=True,timeout=10)
   for line in p.stdout.splitlines():
    if "udp" in line and f"dpt:{port}" in line: iptables_rules.append(line.strip())
+  p=subprocess.run(["iptables","-L","FORWARD","-v","-n","-x"],capture_output=True,text=True,timeout=10)
+  forward_rules=[line.strip() for line in p.stdout.splitlines() if interface in line]
+  p=subprocess.run(["iptables","-t","nat","-L","POSTROUTING","-v","-n","-x"],capture_output=True,text=True,timeout=10)
+  nat_rules=[line.strip() for line in p.stdout.splitlines() if "MASQUERADE" in line]
  nft_lines=[]
  if shutil.which("nft"):
   p=subprocess.run(["nft","-a","list","ruleset"],capture_output=True,text=True,timeout=10)
   for line in p.stdout.splitlines():
    if "udp" in line and str(port) in line: nft_lines.append(line.strip())
  route=subprocess.run(["ip","route","show","default"],capture_output=True,text=True,timeout=10) if shutil.which("ip") else None
- return {"interface":interface,"configured_port":port,"live_port":runtime.get("listen_port"),"live_public_key":runtime.get("public_key"),"peer_count":len(runtime.get("peers",[])),"peers":runtime.get("peers",[]),"iptables_input_matches":iptables_rules,"nft_udp_port_matches":nft_lines[:20],"default_route":(route.stdout.strip() if route and route.returncode==0 else None),"runtime_error":runtime.get("error")}
+ return {"interface":interface,"configured_port":port,"live_port":runtime.get("listen_port"),"live_public_key":runtime.get("public_key"),"peer_count":len(runtime.get("peers",[])),"peers":runtime.get("peers",[]),"iptables_input_matches":iptables_rules,"iptables_forward_matches":forward_rules,"iptables_masquerade_matches":nat_rules,"nft_udp_port_matches":nft_lines[:20],"default_route":(route.stdout.strip() if route and route.returncode==0 else None),"runtime_error":runtime.get("error")}
 
 @app.get("/counters/wireguard/{interface}")
 def counters(interface:str,x_agent_token:str|None=Header(default=None)):
