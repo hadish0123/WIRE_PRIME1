@@ -25,7 +25,7 @@ def _validate_network(data):
   raise HTTPException(422,"Inbound address prefix must match the inbound network")
  if data.protocol in {Protocol.wireguard,Protocol.amneziawg} and network.version!=4:
   raise HTTPException(422,"Current WireGuard dataplane supports IPv4 tunnel networks only")
- if not re.fullmatch(r"[A-Za-z0-9_.-]{1,80}",data.interface):
+ if not re.fullmatch(r"[A-Za-z0-9_-]{1,15}",data.interface):
   raise HTTPException(422,"Invalid interface name")
 
 def _node(db,inbound,tenant_id):
@@ -64,8 +64,14 @@ def create_inbound(data:InboundIn,request:Request,admin:Admin=Depends(require_te
 @router.patch("/{inbound_id}",response_model=InboundOut)
 def update_inbound(inbound_id:str,data:InboundIn,request:Request,admin:Admin=Depends(require_tenant_manager),db:Session=Depends(get_db)):
  _validate_network(data)
- item=db.query(Inbound).filter(Inbound.id==inbound_id,Inbound.tenant_id==admin.tenant_id).first()
+ item=db.query(Inbound).filter(Inbound.id==inbound_id,Inbound.tenant_id==admin.tenant_id).with_for_update().first()
  if not item:raise HTTPException(404,"Inbound not found")
+ if data.node_id!=item.node_id or data.interface!=item.interface:
+  raise HTTPException(409,"Moving an inbound or renaming its interface requires a new inbound")
+ if data.network!=item.network or data.address!=item.address:
+  from ..models import Client
+  if db.query(Client.id).filter(Client.inbound_id==item.id).first():
+   raise HTTPException(409,"Remove existing clients before changing the inbound network")
  if item.protocol!=data.protocol:raise HTTPException(409,"Protocol changes require a new inbound")
  node=db.query(Node).filter(Node.id==data.node_id,Node.tenant_id==admin.tenant_id).first()
  if not node:raise HTTPException(404,"Node not found")
@@ -82,7 +88,7 @@ def update_inbound(inbound_id:str,data:InboundIn,request:Request,admin:Admin=Dep
 
 @router.post("/{inbound_id}/sync",response_model=InboundOut)
 def sync_inbound(inbound_id:str,request:Request,admin:Admin=Depends(require_tenant_manager),db:Session=Depends(get_db)):
- item=db.query(Inbound).filter(Inbound.id==inbound_id,Inbound.tenant_id==admin.tenant_id).first()
+ item=db.query(Inbound).filter(Inbound.id==inbound_id,Inbound.tenant_id==admin.tenant_id).with_for_update().first()
  if not item:raise HTTPException(404,"Inbound not found")
  node=_node(db,item,admin.tenant_id)
  try:
@@ -92,7 +98,7 @@ def sync_inbound(inbound_id:str,request:Request,admin:Admin=Depends(require_tena
 
 @router.delete("/{inbound_id}",status_code=204)
 def delete_inbound(inbound_id:str,request:Request,admin:Admin=Depends(require_tenant_manager),db:Session=Depends(get_db)):
- item=db.query(Inbound).filter(Inbound.id==inbound_id,Inbound.tenant_id==admin.tenant_id).first()
+ item=db.query(Inbound).filter(Inbound.id==inbound_id,Inbound.tenant_id==admin.tenant_id).with_for_update().first()
  if not item:raise HTTPException(404,"Inbound not found")
  node=db.query(Node).filter(Node.id==item.node_id,Node.tenant_id==admin.tenant_id).first()
  if not node:raise HTTPException(404,"Node not found")

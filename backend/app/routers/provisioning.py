@@ -89,13 +89,7 @@ sysctl --system >/dev/null 2>&1 || true
 modprobe wireguard >/dev/null 2>&1 || true
 command -v wg >/dev/null || { echo "WireGuard tools are missing" >&2; exit 13; }
 
-echo "[3/10] Exchanging one-time bootstrap"
-EXCHANGE="$(curl --retry 5 --retry-delay 2 --retry-all-errors -fsS --max-time 30 -X POST "$BACKEND/api/v1/provisioning/bootstrap/$TASK_ID/exchange" -H 'Content-Type: application/json' --data "{\"token\":\"$BOOTSTRAP\"}")"
-NODE_ID="$(printf '%s' "$EXCHANGE" | python3 -c 'import json,sys; print(json.load(sys.stdin)["node_id"])')"
-AGENT_TOKEN="$(printf '%s' "$EXCHANGE" | python3 -c 'import json,sys; print(json.load(sys.stdin)["agent_token"])')"
-VERIFY_KEY="$(printf '%s' "$EXCHANGE" | python3 -c 'import json,sys; print(json.load(sys.stdin)["agent_verify_public_key"])')"
-
-echo "[4/10] Installing Node Agent"
+echo "[3/10] Installing Node Agent"
 PORT=""
 for CANDIDATE in 9443 10443 11443 12443 443; do
   if ! ss -ltnH 2>/dev/null | awk '{print $4}' | grep -qE "([.:])${CANDIDATE}$"; then
@@ -120,6 +114,12 @@ done
   "fastapi>=0.115,<1" "uvicorn[standard]>=0.30,<1" "pydantic>=2.9,<3" \
   "PyJWT[crypto]>=2.10,<3" "cryptography>=43,<47" >/dev/null
 
+echo "[4/10] Exchanging one-time bootstrap"
+EXCHANGE="$(curl --retry 5 --retry-delay 2 --retry-all-errors -fsS --max-time 30 -X POST "$BACKEND/api/v1/provisioning/bootstrap/$TASK_ID/exchange" -H 'Content-Type: application/json' --data "{\"token\":\"$BOOTSTRAP\"}")"
+NODE_ID="$(printf '%s' "$EXCHANGE" | python3 -c 'import json,sys; print(json.load(sys.stdin)["node_id"])')"
+AGENT_TOKEN="$(printf '%s' "$EXCHANGE" | python3 -c 'import json,sys; print(json.load(sys.stdin)["agent_token"])')"
+VERIFY_KEY="$(printf '%s' "$EXCHANGE" | python3 -c 'import json,sys; print(json.load(sys.stdin)["agent_verify_public_key"])')"
+
 printf '%s\n' "$VERIFY_KEY" > /etc/primevpn/agent-public.key
 chmod 600 /etc/primevpn/agent-public.key
 
@@ -130,7 +130,7 @@ PORT=$PORT
 EOF
 chmod 600 /etc/primevpn/agent.env
 
-if printf '%s' "$PUBLIC_HOST" | grep -Eq '^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$'; then
+if printf '%s' "$PUBLIC_HOST" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
   SAN="subjectAltName=IP:$PUBLIC_HOST"
 else
   SAN="subjectAltName=DNS:$PUBLIC_HOST"
@@ -199,8 +199,8 @@ for OLD_PORT in 9443 10443 11443 12443; do
 done
 
 if [ "$PORT" != "443" ]; then
-  iptables -t nat -C PREROUTING -p tcp --dport 443 -j REDIRECT --to-ports "$PORT" >/dev/null 2>&1 || \
-    iptables -t nat -I PREROUTING -p tcp --dport 443 -j REDIRECT --to-ports "$PORT"
+  iptables -t nat -C PREROUTING -p tcp -d "$PUBLIC_HOST" --dport 443 -j REDIRECT --to-ports "$PORT" >/dev/null 2>&1 || \
+    iptables -t nat -I PREROUTING -p tcp -d "$PUBLIC_HOST" --dport 443 -j REDIRECT --to-ports "$PORT"
   iptables -t nat -C OUTPUT -p tcp -d "$PUBLIC_HOST" --dport 443 -j REDIRECT --to-ports "$PORT" >/dev/null 2>&1 || \
     iptables -t nat -I OUTPUT -p tcp -d "$PUBLIC_HOST" --dport 443 -j REDIRECT --to-ports "$PORT"
 fi
@@ -238,7 +238,7 @@ printf '%s' "$HEALTH" | python3 -c 'import json,sys; d=json.load(sys.stdin); ass
 CAPABILITIES="$(printf '%s' "$HEALTH" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin).get("capabilities") or {},separators=(",",":")))')"
 
 echo "[9/10] Registering Node"
-REG_BODY="$(python3 -c 'import json,sys; print(json.dumps({"agent_url":sys.argv[1],"version":"100.0.12","capabilities":json.loads(sys.argv[2])},separators=(",",":")))' "$AGENT_URL" "$CAPABILITIES")"
+REG_BODY="$(python3 -c 'import json,sys; print(json.dumps({"agent_url":sys.argv[1],"version":"100.0.13","capabilities":json.loads(sys.argv[2])},separators=(",",":")))' "$AGENT_URL" "$CAPABILITIES")"
 REG_TMP="$(mktemp)"
 REG_CODE="$(curl -kS --max-time 60 -o "$REG_TMP" -w '%{http_code}' -X POST "$BACKEND/api/v1/provisioning/$NODE_ID/register" \
   -H "Authorization: Bearer $AGENT_TOKEN" -H 'Content-Type: application/json' --data "$REG_BODY" || true)"
@@ -398,18 +398,28 @@ class AgentRegistration(BaseModel):
     capabilities: dict = Field(default_factory=dict)
 
 @router.post("/{node_id}/register")
-async def register_agent(node_id: str, body: AgentRegistration, request: Request, db: Session = Depends(get_db)):
+def register_agent(node_id: str, body: AgentRegistration, request: Request, db: Session = Depends(get_db)):
     token = request.headers.get("Authorization", "")
     if not token.lower().startswith("bearer "): raise HTTPException(401, "Agent token required")
     try: claims = decode_agent_token(token[7:].strip())
     except Exception: raise HTTPException(401, "Invalid agent token")
     if claims.get("type") != "node_access" or claims.get("sub") != node_id: raise HTTPException(403, "Agent identity mismatch")
+    from ..db import set_tenant_context
+    set_tenant_context(db, claims.get("tenant_id"))
     node = db.query(Node).filter(Node.id == node_id, Node.tenant_id == claims.get("tenant_id")).first()
     if not node: raise HTTPException(404, "Node not found")
     import json
     node.agent_url = body.agent_url
     node.agent_version = body.version
     node.capabilities = json.dumps(body.capabilities or {}, separators=(",", ":"))
+    try:
+        health=agent_call(node,"GET","health",timeout=15)
+        if not health.get("capabilities",{}).get("wireguard"):
+            raise RuntimeError("WireGuard is unavailable on the new node")
+    except Exception as exc:
+        node.state=NodeState.provision_failed
+        db.commit()
+        raise HTTPException(502,f"Control plane cannot reach the Node Agent: {exc}")
     node.state = NodeState.ready
     node.last_seen_at = datetime.now(timezone.utc)
     db.commit()
