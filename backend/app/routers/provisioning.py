@@ -437,7 +437,8 @@ async def register_agent(node_id: str, body: AgentRegistration, request: Request
             smoke=agent_call(node,"POST","diagnostics/wireguard-smoke",{
                 "client_private_key":wg_material["private_key"],
                 "client_address":device.assigned_address,
-                "server_public_key":wg_server.server_public_key
+                "server_public_key":wg_server.server_public_key,
+                "endpoint":f"{node.address}:{listen_port}"
             },90)
             if smoke.get("status")!="TRAFFIC_VERIFIED":
                 raise RuntimeError("Automatic WireGuard traffic smoke test failed: "+json.dumps(smoke,separators=(",",":")))
