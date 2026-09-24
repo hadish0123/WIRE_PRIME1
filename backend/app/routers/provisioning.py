@@ -237,8 +237,8 @@ HEALTH="$(curl -kfsS --max-time 15 "https://127.0.0.1:$PORT/health" -H "X-Agent-
 printf '%s' "$HEALTH" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("status")=="READY"; assert d.get("capabilities",{}).get("wireguard") is True' >/dev/null
 CAPABILITIES="$(printf '%s' "$HEALTH" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin).get("capabilities") or {},separators=(",",":")))')"
 
-echo "[9/10] Registering Node and running automatic WireGuard smoke setup"
-REG_BODY="$(python3 -c 'import json,sys; print(json.dumps({"agent_url":sys.argv[1],"version":"100.0.5","capabilities":json.loads(sys.argv[2])},separators=(",",":")))' "$AGENT_URL" "$CAPABILITIES")"
+echo "[9/10] Registering Node"
+REG_BODY="$(python3 -c 'import json,sys; print(json.dumps({"agent_url":sys.argv[1],"version":"100.0.6","capabilities":json.loads(sys.argv[2])},separators=(",",":")))' "$AGENT_URL" "$CAPABILITIES")"
 REG_TMP="$(mktemp)"
 REG_CODE="$(curl -kS --max-time 60 -o "$REG_TMP" -w '%{http_code}' -X POST "$BACKEND/api/v1/provisioning/$NODE_ID/register" \
   -H "Authorization: Bearer $AGENT_TOKEN" -H 'Content-Type: application/json' --data "$REG_BODY" || true)"
@@ -406,45 +406,7 @@ async def register_agent(node_id: str, body: AgentRegistration, request: Request
     node.state = NodeState.ready
     node.last_seen_at = datetime.now(timezone.utc)
     db.commit()
-    auto_setup = {"created": False}
-    existing = db.query(Inbound).filter(Inbound.node_id == node.id, Inbound.tenant_id == node.tenant_id).first()
-    if existing is None:
-        used_ports = {int(x[0]) for x in db.query(Inbound.listen_port).filter(Inbound.node_id == node.id).all()}
-        listen_port = next((p for p in (443, 8443, 51820, 51821) if p not in used_ports), None)
-        if listen_port is None:
-            raise HTTPException(409, "No automatic WireGuard test port is available")
-        manager = db.query(Admin).filter(Admin.tenant_id == node.tenant_id, Admin.role == "tenant_manager").first() or db.query(Admin).filter(Admin.tenant_id == node.tenant_id).first()
-        if manager is None:
-            raise HTTPException(409, "No tenant administrator is available for automatic node test setup")
-        inbound = Inbound(tenant_id=node.tenant_id,node_id=node.id,name="AUTO-NODE-TEST",protocol=Protocol.wireguard,listen_port=listen_port,interface="wg0",address="10.66.0.1/24",network="10.66.0.0/24",dns="1.1.1.1",mtu=1420,enabled=True,desired_state="ACTIVE")
-        db.add(inbound); db.flush()
-        private, public = wg_keypair()
-        db.add(InboundWireGuard(inbound_id=inbound.id,server_public_key=public,server_private_key_encrypted=encrypt_secret(private))); db.flush()
-        try:
-            # Keep the client address as a /24 pool address here; credentials.py derives the device peer as /32.\n            # A /32 client address would leave allocate_device_address() with an empty host pool.\n            # Create the test client BEFORE applying WireGuard. The credential issuer
-            # materializes the peer and sends the complete server config (including
-            # that peer) to the Node Agent. Applying an empty server config here would
-            # make the agent's strict peer_count validation fail with HTTP 502.
-            client=Client(tenant_id=node.tenant_id,created_by_admin_id=manager.id,inbound_id=inbound.id,name="AUTO-NODE-TEST-CLIENT",status=ResourceState.active,assigned_address="10.66.0.2/24")
-            db.add(client); db.flush()
-            credential=issue_client_credential(client.id,admin=manager,db=db)
-            cred_row=db.query(ClientCredential).filter(ClientCredential.id==credential.get("credential_id"),ClientCredential.client_id==client.id).first()
-            device=db.query(Device).filter(Device.id==cred_row.device_id,Device.client_id==client.id).first() if cred_row else None
-            wg_material=json.loads(decrypt_secret(cred_row.encrypted_private_material)) if cred_row else None
-            wg_server=db.query(InboundWireGuard).filter(InboundWireGuard.inbound_id==inbound.id).first()
-            if not cred_row or not device or not wg_material or not wg_server:
-                raise RuntimeError("Automatic smoke client credential material is incomplete")
-            smoke=agent_call(node,"POST","diagnostics/wireguard-smoke",{
-                "client_private_key":wg_material["private_key"],
-                "client_address":device.assigned_address,
-                "server_public_key":wg_server.server_public_key,
-                "endpoint":f"{node.address}:{listen_port}"
-            },90)
-            if smoke.get("status")!="TRAFFIC_VERIFIED":
-                raise RuntimeError("Automatic WireGuard traffic smoke test failed: "+json.dumps(smoke,separators=(",",":")))
-            auto_setup={"created":True,"inbound_id":inbound.id,"client_id":client.id,"credential_id":credential.get("credential_id"),"listen_port":listen_port,"traffic_status":"TRAFFIC_VERIFIED","traffic_reason":"Node Agent completed a real WireGuard client handshake and verified Internet egress with RX/TX counters."}
-            db.commit()
-        except Exception as exc:
-            db.rollback()
-            raise HTTPException(502,f"Automatic node smoke-test setup failed: {exc}")
-    return {"status":"READY","node_id":node.id,"auto_setup":auto_setup}
+    # Registration only establishes the control plane. Do not create test
+    # inbounds/clients here: provisioning must remain Node -> Inbound -> Client,
+    # and failed smoke tests must never leave committed test resources behind.
+    return {"status":"READY","node_id":node.id,"auto_setup":{"created":False}}
