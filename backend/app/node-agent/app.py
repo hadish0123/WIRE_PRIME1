@@ -238,6 +238,7 @@ def wireguard_smoke(data:WireGuardSmoke,x_agent_token:str|None=Header(default=No
    subprocess.run(["ip","link","del","wg-smoke"],capture_output=True,text=True,timeout=10)
    subprocess.run(["ip","route","del","default","dev","wg-smoke","table","51820"],capture_output=True,text=True,timeout=10)
    subprocess.run(["ip","route","del","127.0.0.1/32","dev","lo","table","51820"],capture_output=True,text=True,timeout=10)
+   subprocess.run(["ip","route","del",f"{endpoint_ip}/32","table","51820"],capture_output=True,text=True,timeout=10)
    try: os.unlink(private_path)
    except FileNotFoundError: pass
  except subprocess.CalledProcessError as e:
