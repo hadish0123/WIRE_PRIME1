@@ -1,4 +1,5 @@
 from datetime import datetime, timezone, timedelta
+import json
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 from pathlib import Path
@@ -6,9 +7,9 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from ..db import get_db, set_platform_context
 from ..deps import current_admin, require_tenant_manager
-from ..models import Admin, Node, ProvisioningTask, NodeState, Inbound, InboundWireGuard, Client, ResourceState, Protocol
+from ..models import Admin, Node, ProvisioningTask, NodeState, Inbound, InboundWireGuard, Client, Device, ClientCredential, ResourceState, Protocol
 from ..services.reconcile import desired_node_state
-from ..security import new_bootstrap_token, hash_token, create_agent_token, decode_agent_token, encrypt_secret
+from ..security import new_bootstrap_token, hash_token, create_agent_token, decode_agent_token, encrypt_secret, decrypt_secret
 from ..config import settings
 from ..services.credentials import wg_keypair
 from ..services.agent_client import apply as apply_agent, call as agent_call
@@ -427,7 +428,20 @@ async def register_agent(node_id: str, body: AgentRegistration, request: Request
             client=Client(tenant_id=node.tenant_id,created_by_admin_id=manager.id,inbound_id=inbound.id,name="AUTO-NODE-TEST-CLIENT",status=ResourceState.active,assigned_address="10.66.0.2/24")
             db.add(client); db.flush()
             credential=issue_client_credential(client.id,admin=manager,db=db)
-            auto_setup={"created":True,"inbound_id":inbound.id,"client_id":client.id,"credential_id":credential.get("credential_id"),"listen_port":listen_port,"traffic_status":"NO_TRAFFIC_YET","traffic_reason":"The test client exists, but no phone/PC has connected with its generated configuration yet."}
+            cred_row=db.query(ClientCredential).filter(ClientCredential.id==credential.get("credential_id"),ClientCredential.client_id==client.id).first()
+            device=db.query(Device).filter(Device.id==cred_row.device_id,Device.client_id==client.id).first() if cred_row else None
+            wg_material=json.loads(decrypt_secret(cred_row.encrypted_private_material)) if cred_row else None
+            wg_server=db.query(InboundWireGuard).filter(InboundWireGuard.inbound_id==inbound.id).first()
+            if not cred_row or not device or not wg_material or not wg_server:
+                raise RuntimeError("Automatic smoke client credential material is incomplete")
+            smoke=agent_call(node,"POST","diagnostics/wireguard-smoke",{
+                "client_private_key":wg_material["private_key"],
+                "client_address":device.assigned_address,
+                "server_public_key":wg_server.server_public_key
+            },90)
+            if smoke.get("status")!="TRAFFIC_VERIFIED":
+                raise RuntimeError("Automatic WireGuard traffic smoke test failed: "+json.dumps(smoke,separators=(",",":")))
+            auto_setup={"created":True,"inbound_id":inbound.id,"client_id":client.id,"credential_id":credential.get("credential_id"),"listen_port":listen_port,"traffic_status":"TRAFFIC_VERIFIED","traffic_reason":"Node Agent completed a real WireGuard client handshake and verified Internet egress with RX/TX counters."}
             db.commit()
         except Exception as exc:
             db.rollback()
