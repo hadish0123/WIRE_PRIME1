@@ -238,7 +238,7 @@ printf '%s' "$HEALTH" | python3 -c 'import json,sys; d=json.load(sys.stdin); ass
 CAPABILITIES="$(printf '%s' "$HEALTH" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin).get("capabilities") or {},separators=(",",":")))')"
 
 echo "[9/10] Registering Node"
-REG_BODY="$(python3 -c 'import json,sys; print(json.dumps({"agent_url":sys.argv[1],"version":"100.0.6","capabilities":json.loads(sys.argv[2])},separators=(",",":")))' "$AGENT_URL" "$CAPABILITIES")"
+REG_BODY="$(python3 -c 'import json,sys; print(json.dumps({"agent_url":sys.argv[1],"version":"100.0.7","capabilities":json.loads(sys.argv[2])},separators=(",",":")))' "$AGENT_URL" "$CAPABILITIES")"
 REG_TMP="$(mktemp)"
 REG_CODE="$(curl -kS --max-time 60 -o "$REG_TMP" -w '%{http_code}' -X POST "$BACKEND/api/v1/provisioning/$NODE_ID/register" \
   -H "Authorization: Bearer $AGENT_TOKEN" -H 'Content-Type: application/json' --data "$REG_BODY" || true)"
