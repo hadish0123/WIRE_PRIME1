@@ -351,12 +351,14 @@ def traffic_diagnostics(node_id: str, admin: Admin = Depends(current_admin), db:
         active=[p for p in peers if int(p.get("last_handshake") or 0)>0]
         if not active:
             return {"status":"NO_HANDSHAKE","inbound_id":inbound.id,"peers":peers,"reason":"Peer is installed, but no client handshake has reached the Node. Check client activation, Endpoint IP/UDP port, and provider/cloud firewall UDP access."}
-        p=active[0]
-        endpoint=str(p.get("endpoint") or "")
-        endpoint_host=endpoint.rsplit(":",1)[0].strip("[]") if ":" in endpoint else endpoint
         node_host=str(node.address or "").strip("[]")
-        if endpoint_host and node_host and endpoint_host==node_host:
-            return {"status":"SELF_TEST_ONLY","inbound_id":inbound.id,"peer":p,"reason":"The only observed WireGuard handshake originated from the Node public address itself. No external client handshake has been observed."}
+        def peer_host(peer):
+            endpoint=str(peer.get("endpoint") or "")
+            return endpoint.rsplit(":",1)[0].strip("[]") if ":" in endpoint else endpoint
+        external=[p for p in active if peer_host(p) and peer_host(p)!=node_host]
+        if not external:
+            return {"status":"SELF_TEST_ONLY","inbound_id":inbound.id,"peer":active[0],"reason":"Observed WireGuard handshakes originated only from the Node public address itself. No external client handshake has been observed."}
+        p=external[0]
         if int(p.get("bytes_received") or 0)==0 and int(p.get("bytes_sent") or 0)==0:
             return {"status":"HANDSHAKE_ONLY","inbound_id":inbound.id,"peer":p,"reason":"Handshake exists, but no client payload traffic has been observed yet. Open a website/ping from the client."}
         return {"status":"TRAFFIC_DETECTED","inbound_id":inbound.id,"peer":p,"reason":"An external WireGuard peer handshake and RX/TX traffic are being observed."}
