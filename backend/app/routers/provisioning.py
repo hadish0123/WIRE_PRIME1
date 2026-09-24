@@ -185,6 +185,18 @@ fi
 iptables -C INPUT -p tcp --dport "$PORT" -j ACCEPT >/dev/null 2>&1 || iptables -I INPUT -p tcp --dport "$PORT" -j ACCEPT
 iptables -C INPUT -p tcp --dport 443 -j ACCEPT >/dev/null 2>&1 || iptables -I INPUT -p tcp --dport 443 -j ACCEPT
 
+# Remove stale PRIMEVPN control-path redirects left by previous installer runs.
+# This is important when the agent port changes: multiple 443 -> agent-port rules
+# can otherwise accumulate, and locally-originated HTTPS tests hit OUTPUT first.
+for OLD_PORT in 9443 10443 11443 12443; do
+  while iptables -t nat -C PREROUTING -p tcp --dport 443 -j REDIRECT --to-ports "$OLD_PORT" >/dev/null 2>&1; do
+    iptables -t nat -D PREROUTING -p tcp --dport 443 -j REDIRECT --to-ports "$OLD_PORT" >/dev/null 2>&1 || break
+  done
+  while iptables -t nat -C OUTPUT -p tcp -d "$PUBLIC_HOST" --dport 443 -j REDIRECT --to-ports "$OLD_PORT" >/dev/null 2>&1; do
+    iptables -t nat -D OUTPUT -p tcp -d "$PUBLIC_HOST" --dport 443 -j REDIRECT --to-ports "$OLD_PORT" >/dev/null 2>&1 || break
+  done
+done
+
 if [ "$PORT" != "443" ]; then
   iptables -t nat -C PREROUTING -p tcp --dport 443 -j REDIRECT --to-ports "$PORT" >/dev/null 2>&1 || \
     iptables -t nat -I PREROUTING -p tcp --dport 443 -j REDIRECT --to-ports "$PORT"
