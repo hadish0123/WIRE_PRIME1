@@ -207,8 +207,15 @@ def wireguard_smoke(data:WireGuardSmoke,x_agent_token:str|None=Header(default=No
    endpoint_src=main_route[main_route.index("src")+1] if "src" in main_route else ""
    if not endpoint_dev: raise RuntimeError("Could not determine Node route to WireGuard endpoint")
    subprocess.run(["ip","route","replace","127.0.0.1/32","dev","lo","table","51820"],capture_output=True,text=True,timeout=10,check=True)
-   if endpoint_src:
-    subprocess.run(["ip","route","replace",f"{endpoint_ip}/32","via",main_route[main_route.index("via")+1],"dev",endpoint_dev,"src",endpoint_src,"table","51820"],capture_output=True,text=True,timeout=10,check=True) if "via" in main_route else subprocess.run(["ip","route","replace",f"{endpoint_ip}/32","dev",endpoint_dev,"src",endpoint_src,"table","51820"],capture_output=True,text=True,timeout=10,check=True)
+   gateway=main_route[main_route.index("via")+1] if "via" in main_route else ""
+   if endpoint_src and gateway:
+    # The policy table has no connected route to the WAN gateway. Use onlink so
+    # the endpoint exemption can be installed without first cloning the WAN
+    # subnet into table 51820. This keeps the WireGuard server endpoint reachable
+    # while traffic from the smoke client is policy-routed through wg-smoke.
+    subprocess.run(["ip","route","replace",f"{endpoint_ip}/32","via",gateway,"dev",endpoint_dev,"src",endpoint_src,"onlink","table","51820"],capture_output=True,text=True,timeout=10,check=True)
+   elif endpoint_src:
+    subprocess.run(["ip","route","replace",f"{endpoint_ip}/32","dev",endpoint_dev,"src",endpoint_src,"table","51820"],capture_output=True,text=True,timeout=10,check=True)
    else:
     subprocess.run(["ip","route","replace",f"{endpoint_ip}/32","dev",endpoint_dev,"table","51820"],capture_output=True,text=True,timeout=10,check=True)
    subprocess.run(["ip","route","replace","default","dev","wg-smoke","table","51820"],capture_output=True,text=True,timeout=10,check=True)
