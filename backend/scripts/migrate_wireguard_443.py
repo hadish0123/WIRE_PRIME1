@@ -1,6 +1,9 @@
 import ipaddress
 import os
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.db import SessionLocal, set_platform_context
 from app.models import Client, ClientCredential, Device, Inbound, Node, Protocol
