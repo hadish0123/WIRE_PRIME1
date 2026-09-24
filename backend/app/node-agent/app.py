@@ -3,7 +3,7 @@ from datetime import datetime,timezone
 from fastapi import FastAPI,Header,HTTPException
 from pydantic import BaseModel,Field
 from agent_security import verify_control_token,require_scope
-VERSION="100.0.10" # verify live tunnel routes plus reliable firewall/NAT ordering
+VERSION="100.0.11" # verify live routes and allow tunnel ping with reliable forwarding
 
 app=FastAPI(title="PRIMEVPN Node Agent",version=VERSION)
 class WireGuardSmoke(BaseModel):
@@ -143,6 +143,9 @@ def apply(data:ApplyConfig,x_agent_token:str|None=Header(default=None)):
         port_match=re.search(r"(?m)^ListenPort\s*=\s*(\d+)",data.config)
         if port_match:
          allow_input_port(port_match.group(1),"wireguard")
+        tunnel_ping=["iptables","-C","INPUT","-i",name,"-p","icmp","--icmp-type","echo-request","-j","ACCEPT"]
+        if subprocess.run(tunnel_ping,capture_output=True,text=True,timeout=10).returncode:
+         subprocess.run(["iptables","-I","INPUT","1","-i",name,"-p","icmp","--icmp-type","echo-request","-j","ACCEPT"],capture_output=True,text=True,timeout=10,check=True)
         rules=[
          ["iptables","-C","FORWARD","-i",name,"-j","ACCEPT"],
          ["iptables","-C","FORWARD","-o",name,"-m","conntrack","--ctstate","RELATED,ESTABLISHED","-j","ACCEPT"],
