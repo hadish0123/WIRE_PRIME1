@@ -36,3 +36,18 @@ def test_agent_token_wrong_node_rejected(monkeypatch):
     from fastapi import HTTPException
     with pytest.raises(HTTPException):
         verify_control_token(token)
+
+
+def test_wg_dump_reports_public_key_not_private_key(monkeypatch):
+    import app as agent_app
+
+    class Result:
+        returncode = 0
+        stdout = "PRIVATE_KEY\tPUBLIC_KEY\t51820\toff\n"
+        stderr = ""
+
+    monkeypatch.setattr(agent_app.subprocess, "run", lambda *args, **kwargs: Result())
+    result = agent_app._wg_dump("wg0")
+    assert result["public_key"] == "PUBLIC_KEY"
+    assert result["private_key_present"] is True
+    assert result["listen_port"] == 51820
