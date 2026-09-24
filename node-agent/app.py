@@ -3,9 +3,15 @@ from datetime import datetime,timezone
 from fastapi import FastAPI,Header,HTTPException
 from pydantic import BaseModel,Field
 from agent_security import verify_control_token,require_scope
-VERSION="100.0.5" # hardened node preflight and WireGuard runtime diagnostics
+VERSION="100.0.7" # harden forwarding/NAT and external-client diagnostics
 
 app=FastAPI(title="PRIMEVPN Node Agent",version=VERSION)
+class WireGuardSmoke(BaseModel):
+ client_private_key:str=Field(min_length=40,max_length=100)
+ client_address:str=Field(min_length=7,max_length=64)
+ server_public_key:str=Field(min_length=40,max_length=100)
+ endpoint:str=Field(min_length=3,max_length=255)
+
 class ApplyConfig(BaseModel):
  protocol:str
  interface:str=Field(min_length=1,max_length=80)
@@ -120,10 +126,10 @@ def apply(data:ApplyConfig,x_agent_token:str|None=Header(default=None)):
         for rule in rules:
          check=subprocess.run(rule,capture_output=True,text=True,timeout=10)
          if check.returncode:
-          subprocess.run([rule[0],"-A"]+rule[2:],capture_output=True,text=True,timeout=10,check=True)
+          subprocess.run([rule[0],"-I",rule[2],"1"]+rule[3:],capture_output=True,text=True,timeout=10,check=True)
         check=subprocess.run(["iptables","-t","nat","-C","POSTROUTING","-s",str(net),"-o",wan,"-j","MASQUERADE"],capture_output=True,text=True,timeout=10)
         if check.returncode:
-         subprocess.run(["iptables","-t","nat","-A","POSTROUTING","-s",str(net),"-o",wan,"-j","MASQUERADE"],capture_output=True,text=True,timeout=10,check=True)
+         subprocess.run(["iptables","-t","nat","-I","POSTROUTING","1","-s",str(net),"-o",wan,"-j","MASQUERADE"],capture_output=True,text=True,timeout=10,check=True)
         port_match=re.search(r"(?m)^ListenPort\s*=\s*(\d+)",data.config)
         if port_match:
          listen_port=port_match.group(1)
@@ -133,6 +139,14 @@ def apply(data:ApplyConfig,x_agent_token:str|None=Header(default=None)):
          if shutil.which("firewall-cmd") and subprocess.run(["firewall-cmd","--state"],capture_output=True,text=True,timeout=10).returncode==0:
           subprocess.run(["firewall-cmd","--permanent","--add-port",f"{listen_port}/udp"],capture_output=True,text=True,timeout=10,check=True)
           subprocess.run(["firewall-cmd","--reload"],capture_output=True,text=True,timeout=10,check=True)
+        # Persist forwarding/NAT after the inbound is created. The installer runs
+        # before an inbound exists, so saving only during installation loses these
+        # rules after a VPS reboot.
+        if shutil.which("netfilter-persistent"):
+         subprocess.run(["netfilter-persistent","save"],capture_output=True,text=True,timeout=20)
+        elif os.path.isdir("/etc/sysconfig") and shutil.which("iptables-save"):
+         with open("/etc/sysconfig/iptables","w",encoding="utf-8") as f:
+          subprocess.run(["iptables-save"],stdout=f,text=True,timeout=20,check=True)
   elif data.protocol=="openvpn":
    if not shutil.which("systemctl"):raise RuntimeError("systemctl unavailable")
    server_dir="/etc/openvpn/server";os.makedirs(server_dir,mode=0o700,exist_ok=True)
@@ -173,8 +187,79 @@ def _wg_dump(interface):
  for line in rows[1:]:
   parts=line.split("\t")
   if len(parts)>=8:
-   peers.append({"public_key":parts[0],"preshared_key_configured":parts[1] != "0000000000000000000000000000000000000000000000000000000000000000","endpoint":parts[2],"allowed_ips":parts[3],"last_handshake":int(parts[4]),"bytes_received":int(parts[5]),"bytes_sent":int(parts[6]),"persistent_keepalive":int(parts[7])})
+   peers.append({"public_key":parts[0],"preshared_key_configured":parts[1] != "0000000000000000000000000000000000000000000000000000000000000000","endpoint":parts[2],"allowed_ips":parts[3],"last_handshake":int(parts[4]),"bytes_received":int(parts[5]),"bytes_sent":int(parts[6]),"persistent_keepalive":0 if parts[7] == "off" else int(parts[7])})
  return {"public_key":head[0],"private_key_present":head[1] != "(none)","listen_port":int(head[2]),"fwmark":head[3],"peers":peers}
+
+@app.post("/diagnostics/wireguard-smoke")
+def wireguard_smoke(data:WireGuardSmoke,x_agent_token:str|None=Header(default=None)):
+ auth(x_agent_token,"write")
+ if not shutil.which("wg") or not shutil.which("ip"): raise HTTPException(503,"WireGuard/ip tools unavailable")
+ import ipaddress,time
+ try:
+  addr=ipaddress.ip_interface(data.client_address)
+  if addr.version!=4: raise ValueError("Smoke test currently requires IPv4")
+  private_path=tempfile.mktemp(prefix="primevpn-smoke-key-")
+  try:
+   with open(private_path,"w",encoding="utf-8") as f:f.write(data.client_private_key.strip()+"\n")
+   os.chmod(private_path,0o600)
+   subprocess.run(["ip","link","del","wg-smoke"],capture_output=True,text=True,timeout=10)
+   subprocess.run(["ip","link","add","wg-smoke","type","wireguard"],capture_output=True,text=True,timeout=10,check=True)
+   subprocess.run(["ip","addr","add",str(addr),"dev","wg-smoke"],capture_output=True,text=True,timeout=10,check=True)
+   subprocess.run(["wg","set","wg-smoke","private-key",private_path,"peer",data.server_public_key.strip(),"allowed-ips","0.0.0.0/0","endpoint",data.endpoint,"persistent-keepalive","1"],capture_output=True,text=True,timeout=10,check=True)
+   subprocess.run(["ip","link","set","wg-smoke","up"],capture_output=True,text=True,timeout=10,check=True)
+   endpoint_host=data.endpoint.rsplit(":",1)[0]
+   endpoint_ip=ipaddress.ip_address(endpoint_host)
+   route_to_endpoint=subprocess.run(["ip","route","get",str(endpoint_ip)],capture_output=True,text=True,timeout=10,check=True).stdout
+   main_route=route_to_endpoint.splitlines()[0].split()
+   endpoint_dev=main_route[main_route.index("dev")+1] if "dev" in main_route else ""
+   endpoint_src=main_route[main_route.index("src")+1] if "src" in main_route else ""
+   if not endpoint_dev: raise RuntimeError("Could not determine Node route to WireGuard endpoint")
+   subprocess.run(["ip","route","replace","127.0.0.1/32","dev","lo","table","51820"],capture_output=True,text=True,timeout=10,check=True)
+   gateway=main_route[main_route.index("via")+1] if "via" in main_route else ""
+   if endpoint_src and gateway:
+    # The policy table has no connected route to the WAN gateway. Use onlink so
+    # the endpoint exemption can be installed without first cloning the WAN
+    # subnet into table 51820. This keeps the WireGuard server endpoint reachable
+    # while traffic from the smoke client is policy-routed through wg-smoke.
+    subprocess.run(["ip","route","replace",f"{endpoint_ip}/32","via",gateway,"dev",endpoint_dev,"src",endpoint_src,"onlink","table","51820"],capture_output=True,text=True,timeout=10,check=True)
+   elif endpoint_src:
+    subprocess.run(["ip","route","replace",f"{endpoint_ip}/32","dev",endpoint_dev,"src",endpoint_src,"table","51820"],capture_output=True,text=True,timeout=10,check=True)
+   else:
+    subprocess.run(["ip","route","replace",f"{endpoint_ip}/32","dev",endpoint_dev,"table","51820"],capture_output=True,text=True,timeout=10,check=True)
+   subprocess.run(["ip","route","replace","default","dev","wg-smoke","table","51820"],capture_output=True,text=True,timeout=10,check=True)
+   subprocess.run(["ip","rule","add","priority","100","from",f"{addr.ip}/32","table","51820"],capture_output=True,text=True,timeout=10)
+   route_check=subprocess.run(["ip","route","get","1.1.1.1","from",str(addr.ip)],capture_output=True,text=True,timeout=10)
+   if route_check.returncode!=0: raise RuntimeError("Smoke client policy route failed: "+(route_check.stderr.strip() or route_check.stdout.strip()))
+   handshake=0
+   for _ in range(20):
+    p=subprocess.run(["wg","show","wg-smoke","latest-handshakes"],capture_output=True,text=True,timeout=5,check=True)
+    vals=p.stdout.split()
+    handshake=int(vals[1]) if len(vals)>=2 else 0
+    if handshake: break
+    time.sleep(0.5)
+   if not handshake: raise RuntimeError("Smoke client handshake did not complete")
+   p=subprocess.run(["wg","show","wg-smoke","transfer"],capture_output=True,text=True,timeout=5,check=True)
+   parts=p.stdout.split(); before_rx=int(parts[1]) if len(parts)>=2 else 0; before_tx=int(parts[2]) if len(parts)>=3 else 0
+   ping=subprocess.run(["ping","-4","-c","2","-W","3","-I","wg-smoke","1.1.1.1"],capture_output=True,text=True,timeout=10)
+   curl=subprocess.run(["curl","-4","-fsS","--interface","wg-smoke","--max-time","10","https://api.ipify.org"],capture_output=True,text=True,timeout=15)
+   p=subprocess.run(["wg","show","wg-smoke","transfer"],capture_output=True,text=True,timeout=5,check=True)
+   parts=p.stdout.split(); after_rx=int(parts[1]) if len(parts)>=2 else 0; after_tx=int(parts[2]) if len(parts)>=3 else 0
+   if ping.returncode!=0: raise RuntimeError("Smoke client reached WireGuard but Internet ping failed: "+(ping.stderr.strip() or ping.stdout.strip()))
+   if curl.returncode!=0 or not curl.stdout.strip(): raise RuntimeError("Smoke client Internet HTTPS failed: "+(curl.stderr.strip() or curl.stdout.strip()))
+   if after_rx<=before_rx or after_tx<=before_tx: raise RuntimeError(f"Smoke client handshake exists but tunnel counters did not increase (rx {before_rx}->{after_rx}, tx {before_tx}->{after_tx})")
+   return {"status":"TRAFFIC_VERIFIED","handshake":handshake,"rx_bytes":after_rx,"tx_bytes":after_tx,"internet_ipv4":curl.stdout.strip()}
+  finally:
+   subprocess.run(["ip","rule","del","priority","100","from",f"{addr.ip}/32","table","51820"],capture_output=True,text=True,timeout=10)
+   subprocess.run(["ip","link","del","wg-smoke"],capture_output=True,text=True,timeout=10)
+   subprocess.run(["ip","route","del","default","dev","wg-smoke","table","51820"],capture_output=True,text=True,timeout=10)
+   subprocess.run(["ip","route","del","127.0.0.1/32","dev","lo","table","51820"],capture_output=True,text=True,timeout=10)
+   subprocess.run(["ip","route","del",f"{endpoint_ip}/32","table","51820"],capture_output=True,text=True,timeout=10)
+   try: os.unlink(private_path)
+   except FileNotFoundError: pass
+ except subprocess.CalledProcessError as e:
+  raise HTTPException(502,e.stderr.strip() or e.stdout.strip() or str(e))
+ except Exception as e:
+  raise HTTPException(502,str(e))
 
 @app.get("/diagnostics/preflight")
 def diagnostics_preflight(x_agent_token:str|None=Header(default=None)):
@@ -255,18 +340,22 @@ def wireguard_diagnostics(interface:str,port:int,x_agent_token:str|None=Header(d
  if port<1 or port>65535: raise HTTPException(400,"Invalid UDP port")
  try: runtime=_wg_dump(interface)
  except Exception as e: runtime={"error":str(e),"public_key":None,"listen_port":None,"peers":[]}
- iptables_rules=[]
+ iptables_rules=[];forward_rules=[];nat_rules=[]
  if shutil.which("iptables"):
   p=subprocess.run(["iptables","-L","INPUT","-v","-n","-x"],capture_output=True,text=True,timeout=10)
   for line in p.stdout.splitlines():
    if "udp" in line and f"dpt:{port}" in line: iptables_rules.append(line.strip())
+  p=subprocess.run(["iptables","-L","FORWARD","-v","-n","-x"],capture_output=True,text=True,timeout=10)
+  forward_rules=[line.strip() for line in p.stdout.splitlines() if interface in line]
+  p=subprocess.run(["iptables","-t","nat","-L","POSTROUTING","-v","-n","-x"],capture_output=True,text=True,timeout=10)
+  nat_rules=[line.strip() for line in p.stdout.splitlines() if "MASQUERADE" in line]
  nft_lines=[]
  if shutil.which("nft"):
   p=subprocess.run(["nft","-a","list","ruleset"],capture_output=True,text=True,timeout=10)
   for line in p.stdout.splitlines():
    if "udp" in line and str(port) in line: nft_lines.append(line.strip())
  route=subprocess.run(["ip","route","show","default"],capture_output=True,text=True,timeout=10) if shutil.which("ip") else None
- return {"interface":interface,"configured_port":port,"live_port":runtime.get("listen_port"),"live_public_key":runtime.get("public_key"),"peer_count":len(runtime.get("peers",[])),"peers":runtime.get("peers",[]),"iptables_input_matches":iptables_rules,"nft_udp_port_matches":nft_lines[:20],"default_route":(route.stdout.strip() if route and route.returncode==0 else None),"runtime_error":runtime.get("error")}
+ return {"interface":interface,"configured_port":port,"live_port":runtime.get("listen_port"),"live_public_key":runtime.get("public_key"),"peer_count":len(runtime.get("peers",[])),"peers":runtime.get("peers",[]),"iptables_input_matches":iptables_rules,"iptables_forward_matches":forward_rules,"iptables_masquerade_matches":nat_rules,"nft_udp_port_matches":nft_lines[:20],"default_route":(route.stdout.strip() if route and route.returncode==0 else None),"runtime_error":runtime.get("error")}
 
 @app.get("/counters/wireguard/{interface}")
 def counters(interface:str,x_agent_token:str|None=Header(default=None)):
