@@ -36,4 +36,5 @@ jobs:
      with: {python-version: "3.12"}
    - run: pip install . pytest
    - run: python -m py_compile app.py agent_security.py
+   - run: python -m py_compile ../backend/app/node-agent/app.py ../backend/app/node-agent/agent_security.py
    - run: pytest -q
