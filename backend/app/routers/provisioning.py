@@ -189,13 +189,178 @@ if command -v netfilter-persistent >/dev/null 2>&1; then netfilter-persistent sa
 # Keep the Node Agent reachable through the conventional HTTPS control port. TCP/443 can coexist with WireGuard UDP/443.
 # If the Agent itself is on another free TCP port, transparently redirect TCP/443 to it.
 AGENT_PUBLIC_PORT=443
-if [ "$PORT" != "$AGENT_PUBLIC_PORT" ] && command -v iptables >/dev/null 2>&1; then
-  iptables -t nat -C PREROUTING -p tcp --dport "$AGENT_PUBLIC_PORT" -j REDIRECT --to-ports "$PORT" >/dev/null 2>&1 || \
-    iptables -t nat -I PREROUTING -p tcp --dport "$AGENT_PUBLIC_PORT" -j REDIRECT --to-ports "$PORT"
-  iptables -t nat -C OUTPUT -p tcp -d 127.0.0.1 --dport "$AGENT_PUBLIC_PORT" -j REDIRECT --to-ports "$PORT" >/dev/null 2>&1 || true
+if command -v iptables >/dev/null 2>&1; then
+  iptables -C INPUT -p tcp --dport "$AGENT_PUBLIC_PORT" -j ACCEPT >/dev/null 2>&1 || \
+    iptables -I INPUT -p tcp --dport "$AGENT_PUBLIC_PORT" -j ACCEPT
+  if [ "$PORT" != "$AGENT_PUBLIC_PORT" ]; then
+    iptables -t nat -C PREROUTING -p tcp --dport "$AGENT_PUBLIC_PORT" -j REDIRECT --to-ports "$PORT" >/dev/null 2>&1 || \
+      iptables -t nat -I PREROUTING -p tcp --dport "$AGENT_PUBLIC_PORT" -j REDIRECT --to-ports "$PORT"
+    if printf '%s' "$PUBLIC_HOST" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+PREFLIGHT="$(curl -kfsS --max-time 10 "https://127.0.0.1:$PORT/diagnostics/preflight" -H "X-Agent-Token: $AGENT_TOKEN")"
+printf '%s' "$PREFLIGHT" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("ready") is True, " | ".join(x.get("name")+": "+x.get("detail","") for x in d.get("issues",[]))' || {
+  echo "NODE PREFLIGHT FAILED"
+  printf '%s\n' "$PREFLIGHT"
+  echo "The node was NOT registered as READY."
+  echo "Fix the reported checks and rerun this same installer command."
+  exit 30
+}
+echo "NODE PREFLIGHT: PASS"
+printf '%s\n' "$PREFLIGHT" | python3 -m json.tool 2>/dev/null || true
+
+HEALTH="$(curl -kfsS --max-time 10 "https://127.0.0.1:$PORT/health" -H "X-Agent-Token: $AGENT_TOKEN")"
+printf '%s' "$HEALTH" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("status")=="READY"; assert d.get("capabilities",{}).get("wireguard") is True; assert d.get("capabilities",{}).get("openvpn") is True' >/dev/null
+CAPABILITIES="$(printf '%s' "$HEALTH" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin).get("capabilities") or {},separators=(",",":")))')"
+REG_BODY="$(python3 -c 'import json,sys; print(json.dumps({"agent_url":sys.argv[1],"version":"100.0.5","capabilities":json.loads(sys.argv[2])},separators=(",",":")))' "$AGENT_URL" "$CAPABILITIES")"
+REG_TMP="$(mktemp)"
+REG_CODE="$(curl -kfsS --max-time 30 -o "$REG_TMP" -w '%{http_code}' -X POST "$BACKEND/api/v1/provisioning/$NODE_ID/register" -H "Authorization: Bearer $AGENT_TOKEN" -H 'Content-Type: application/json' --data "$REG_BODY" || true)"
+if [ "$REG_CODE" != "200" ]; then
+  echo "NODE REGISTRATION FAILED: HTTP $REG_CODE"
+  cat "$REG_TMP" 2>/dev/null || true
+  rm -f "$REG_TMP"
+  exit 32
+fi
+rm -f "$REG_TMP"
+echo "PRIMEVPN Node installed successfully and passed local preflight."
+echo "Node ID: $NODE_ID"
+echo "Agent: $AGENT_URL"
+echo "Local checks: WireGuard=$(command -v wg >/dev/null && echo OK || echo MISSING) OpenVPN=$(command -v openvpn >/dev/null && echo OK || echo MISSING)"
+echo "Firewall: managed locally; cloud/provider firewall may still require UDP/TCP rules in its control panel"
+"""
+
+class BootstrapExchange(BaseModel):
+    token: str = Field(min_length=30, max_length=256)
+
+@router.get("/install.sh", response_class=PlainTextResponse)
+def install_script():
+    return INSTALL_SCRIPT
+@router.get("/node-agent/{filename}", response_class=PlainTextResponse)
+def node_agent_file(filename: str):
+    allowed = {"pyproject.toml", "app.py", "agent_security.py"}
+    if filename not in allowed:
+        raise HTTPException(404, "Node Agent file not found")
+    path = Path(__file__).resolve().parents[1] / "node-agent" / filename
+    if not path.is_file():
+        raise HTTPException(404, "Node Agent file not found")
+    return PlainTextResponse(path.read_text(encoding="utf-8"))
+
+
+@router.get("/{node_id}/desired-state")
+def desired(node_id: str, admin: Admin = Depends(current_admin), db: Session = Depends(get_db)):
+    n = db.query(Node).filter(Node.id == node_id, Node.tenant_id == admin.tenant_id).first()
+    if not n: raise HTTPException(404, "Node not found")
+    return desired_node_state(db, n)
+
+@router.get("/{node_id}/traffic-diagnostics")
+def traffic_diagnostics(node_id: str, admin: Admin = Depends(current_admin), db: Session = Depends(get_db)):
+    node=db.query(Node).filter(Node.id==node_id,Node.tenant_id==admin.tenant_id).first()
+    if not node: raise HTTPException(404,"Node not found")
+    inbound=db.query(Inbound).filter(Inbound.node_id==node.id,Inbound.tenant_id==node.tenant_id).order_by(Inbound.created_at.asc()).first()
+    if not inbound: return {"status":"NO_INBOUND","reason":"No inbound exists on this node yet."}
+    if inbound.protocol not in {Protocol.wireguard,Protocol.amneziawg}: return {"status":"UNSUPPORTED","reason":"Traffic diagnostics currently target the automatic WireGuard smoke test."}
+    try:
+        diag=agent_call(node,"GET",f"diagnostics/wireguard/{inbound.interface}/{inbound.listen_port}",None,15)
+        peers=diag.get("peers") or []
+        if not peers:
+            return {"status":"NO_PEER","inbound_id":inbound.id,"reason":"Inbound is installed, but no WireGuard peer is installed. Create/issue a client credential."}
+        active=[p for p in peers if int(p.get("last_handshake") or 0)>0]
+        if not active:
+            return {"status":"NO_HANDSHAKE","inbound_id":inbound.id,"peers":peers,"reason":"Peer is installed, but no client handshake has reached the Node. Check client activation, Endpoint IP/UDP port, and provider/cloud firewall UDP access."}
+        p=active[0]
+        if int(p.get("bytes_received") or 0)==0 and int(p.get("bytes_sent") or 0)==0:
+            return {"status":"HANDSHAKE_ONLY","inbound_id":inbound.id,"peer":p,"reason":"Handshake exists, but no client payload traffic has been observed yet. Open a website/ping from the client."}
+        return {"status":"TRAFFIC_DETECTED","inbound_id":inbound.id,"peer":p,"reason":"WireGuard handshake and peer RX/TX traffic are being observed."}
+    except Exception as exc:
+        return {"status":"DIAGNOSTICS_UNAVAILABLE","inbound_id":inbound.id,"reason":str(exc)}
+
+@router.get("/{node_id}/tasks")
+def tasks(node_id: str, admin: Admin = Depends(current_admin), db: Session = Depends(get_db)):
+    if not db.query(Node).filter(Node.id == node_id, Node.tenant_id == admin.tenant_id).first():
+        raise HTTPException(404, "Node not found")
+    return db.query(ProvisioningTask).filter(ProvisioningTask.node_id == node_id, ProvisioningTask.tenant_id == admin.tenant_id).order_by(ProvisioningTask.created_at.desc()).limit(100).all()
+
+@router.post("/{node_id}/bootstrap")
+def bootstrap(node_id: str, admin: Admin = Depends(require_tenant_manager), db: Session = Depends(get_db)):
+    n = db.query(Node).filter(Node.id == node_id, Node.tenant_id == admin.tenant_id).first()
+    if not n: raise HTTPException(404, "Node not found")
+    raw, h = new_bootstrap_token()
+    task = ProvisioningTask(tenant_id=admin.tenant_id, node_id=n.id, idempotency_key="bootstrap:" + raw, state=NodeState.authenticating.value, bootstrap_token_hash=h, bootstrap_expires_at=datetime.now(timezone.utc) + timedelta(minutes=15))
+    db.add(task); n.state = NodeState.authenticating; db.commit()
+    return {"task_id": task.id, "bootstrap_token": raw, "expires_at": task.bootstrap_expires_at}
+
+@router.post("/bootstrap/{task_id}/exchange")
+def exchange(task_id: str, body: BootstrapExchange, db: Session = Depends(get_db)):
+    set_platform_context(db)
+    task = db.query(ProvisioningTask).filter(ProvisioningTask.id == task_id).with_for_update().first()
+    now = datetime.now(timezone.utc)
+    if not task or not task.bootstrap_token_hash or not task.bootstrap_expires_at or task.bootstrap_expires_at <= now: raise HTTPException(401, "Bootstrap token expired")
+    if hash_token(body.token) != task.bootstrap_token_hash: raise HTTPException(401, "Invalid bootstrap token")
+    node = db.query(Node).filter(Node.id == task.node_id, Node.tenant_id == task.tenant_id).first()
+    if not node: raise HTTPException(401, "Invalid bootstrap binding")
+    task.bootstrap_token_hash = None; task.bootstrap_expires_at = None; task.state = NodeState.syncing.value; node.state = NodeState.syncing; db.commit()
+    return {"node_id": node.id, "tenant_id": node.tenant_id, "agent_token": create_agent_token(node.id, node.tenant_id, ["read", "write"]), "agent_verify_public_key": settings.agent_verify_public_key, "expires_in": 600}
+
+class AgentRegistration(BaseModel):
+    agent_url: str = Field(min_length=10, max_length=512)
+    version: str | None = Field(default=None, max_length=40)
+    capabilities: dict = Field(default_factory=dict)
+
+@router.post("/{node_id}/register")
+async def register_agent(node_id: str, body: AgentRegistration, request: Request, db: Session = Depends(get_db)):
+    token = request.headers.get("Authorization", "")
+    if not token.lower().startswith("bearer "): raise HTTPException(401, "Agent token required")
+    try: claims = decode_agent_token(token[7:].strip())
+    except Exception: raise HTTPException(401, "Invalid agent token")
+    if claims.get("type") != "node_access" or claims.get("sub") != node_id: raise HTTPException(403, "Agent identity mismatch")
+    node = db.query(Node).filter(Node.id == node_id, Node.tenant_id == claims.get("tenant_id")).first()
+    if not node: raise HTTPException(404, "Node not found")
+    import json
+    node.agent_url = body.agent_url
+    node.agent_version = body.version
+    node.capabilities = json.dumps(body.capabilities or {}, separators=(",", ":"))
+    node.state = NodeState.ready
+    node.last_seen_at = datetime.now(timezone.utc)
+    db.commit()
+    auto_setup = {"created": False}
+    existing = db.query(Inbound).filter(Inbound.node_id == node.id, Inbound.tenant_id == node.tenant_id).first()
+    if existing is None:
+        used_ports = {int(x[0]) for x in db.query(Inbound.listen_port).filter(Inbound.node_id == node.id).all()}
+        listen_port = next((p for p in (443, 8443, 51820, 51821) if p not in used_ports), None)
+        if listen_port is None:
+            raise HTTPException(409, "No automatic WireGuard test port is available")
+        manager = db.query(Admin).filter(Admin.tenant_id == node.tenant_id, Admin.role == "tenant_manager").first() or db.query(Admin).filter(Admin.tenant_id == node.tenant_id).first()
+        if manager is None:
+            raise HTTPException(409, "No tenant administrator is available for automatic node test setup")
+        inbound = Inbound(tenant_id=node.tenant_id,node_id=node.id,name="AUTO-NODE-TEST",protocol=Protocol.wireguard,listen_port=listen_port,interface="wg0",address="10.66.0.1/24",network="10.66.0.0/24",dns="1.1.1.1",mtu=1420,enabled=True,desired_state="ACTIVE")
+        db.add(inbound); db.flush()
+        private, public = wg_keypair()
+        db.add(InboundWireGuard(inbound_id=inbound.id,server_public_key=public,server_private_key_encrypted=encrypt_secret(private))); db.flush()
+        try:
+            rendered=render_inbound(inbound,node,db)
+            apply_agent(node,rendered["protocol"],rendered["interface"],rendered["config"],rendered.get("files"))
+            client=Client(tenant_id=node.tenant_id,created_by_admin_id=manager.id,inbound_id=inbound.id,name="AUTO-NODE-TEST-CLIENT",status=ResourceState.active,assigned_address="10.66.0.2/32")
+            db.add(client); db.flush()
+            credential=issue_client_credential(client.id,admin=manager,db=db)
+            auto_setup={"created":True,"inbound_id":inbound.id,"client_id":client.id,"credential_id":credential.get("credential_id"),"listen_port":listen_port,"traffic_status":"NO_TRAFFIC_YET","traffic_reason":"The test client exists, but no phone/PC has connected with its generated configuration yet."}
+            db.commit()
+        except Exception as exc:
+            db.rollback()
+            raise HTTPException(502,f"Automatic node smoke-test setup failed: {exc}")
+    return {"status":"READY","node_id":node.id,"auto_setup":auto_setup}
+; then
+      iptables -t nat -C OUTPUT -p tcp -d "$PUBLIC_HOST" --dport "$AGENT_PUBLIC_PORT" -j REDIRECT --to-ports "$PORT" >/dev/null 2>&1 || \
+        iptables -t nat -I OUTPUT -p tcp -d "$PUBLIC_HOST" --dport "$AGENT_PUBLIC_PORT" -j REDIRECT --to-ports "$PORT"
+    fi
+  fi
   netfilter-persistent save >/dev/null 2>&1 || true
 fi
 AGENT_URL="https://$PUBLIC_HOST:$AGENT_PUBLIC_PORT"
+if ! curl -kfsS --max-time 8 "$AGENT_URL/healthz" >/dev/null 2>&1; then
+  echo "NODE AGENT PUBLIC REACHABILITY FAILED: $AGENT_URL/healthz"
+  ss -ltnp 2>/dev/null || true
+  iptables -t nat -L PREROUTING -n -v 2>/dev/null || true
+  iptables -t nat -L OUTPUT -n -v 2>/dev/null || true
+  iptables -L INPUT -n -v 2>/dev/null || true
+  exit 31
+fi
 PREFLIGHT="$(curl -kfsS --max-time 10 "https://127.0.0.1:$PORT/diagnostics/preflight" -H "X-Agent-Token: $AGENT_TOKEN")"
 printf '%s' "$PREFLIGHT" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("ready") is True, " | ".join(x.get("name")+": "+x.get("detail","") for x in d.get("issues",[]))' || {
   echo "NODE PREFLIGHT FAILED"
