@@ -3,7 +3,7 @@ from datetime import datetime,timezone
 from fastapi import FastAPI,Header,HTTPException
 from pydantic import BaseModel,Field
 from agent_security import verify_control_token,require_scope
-VERSION="100.0.9" # reconcile routes and firewall ordering for reliable client forwarding
+VERSION="100.0.10" # verify live tunnel routes plus reliable firewall/NAT ordering
 
 app=FastAPI(title="PRIMEVPN Node Agent",version=VERSION)
 class WireGuardSmoke(BaseModel):
@@ -370,7 +370,9 @@ def wireguard_diagnostics(interface:str,port:int,x_agent_token:str|None=Header(d
   for line in p.stdout.splitlines():
    if "udp" in line and str(port) in line: nft_lines.append(line.strip())
  route=subprocess.run(["ip","route","show","default"],capture_output=True,text=True,timeout=10) if shutil.which("ip") else None
- return {"interface":interface,"configured_port":port,"live_port":runtime.get("listen_port"),"live_public_key":runtime.get("public_key"),"peer_count":len(runtime.get("peers",[])),"peers":runtime.get("peers",[]),"iptables_input_matches":iptables_rules,"iptables_forward_matches":forward_rules,"iptables_masquerade_matches":nat_rules,"nft_udp_port_matches":nft_lines[:20],"default_route":(route.stdout.strip() if route and route.returncode==0 else None),"runtime_error":runtime.get("error")}
+ iface_addr=subprocess.run(["ip","-o","addr","show","dev",interface],capture_output=True,text=True,timeout=10) if shutil.which("ip") else None
+ iface_route=subprocess.run(["ip","route","show","dev",interface],capture_output=True,text=True,timeout=10) if shutil.which("ip") else None
+ return {"interface":interface,"configured_port":port,"live_port":runtime.get("listen_port"),"live_public_key":runtime.get("public_key"),"peer_count":len(runtime.get("peers",[])),"peers":runtime.get("peers",[]),"iptables_input_matches":iptables_rules,"iptables_forward_matches":forward_rules,"iptables_masquerade_matches":nat_rules,"nft_udp_port_matches":nft_lines[:20],"default_route":(route.stdout.strip() if route and route.returncode==0 else None),"interface_addresses":(iface_addr.stdout.strip() if iface_addr and iface_addr.returncode==0 else None),"interface_routes":(iface_route.stdout.strip() if iface_route and iface_route.returncode==0 else None),"runtime_error":runtime.get("error")}
 
 @app.get("/counters/wireguard/{interface}")
 def counters(interface:str,x_agent_token:str|None=Header(default=None)):
