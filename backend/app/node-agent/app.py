@@ -3,7 +3,7 @@ from datetime import datetime,timezone
 from fastapi import FastAPI,Header,HTTPException
 from pydantic import BaseModel,Field
 from agent_security import verify_control_token,require_scope
-VERSION="100.0.7" # harden forwarding/NAT and external-client diagnostics
+VERSION="100.0.8" # reconcile interface routes plus hardened forwarding/NAT diagnostics
 
 app=FastAPI(title="PRIMEVPN Node Agent",version=VERSION)
 class WireGuardSmoke(BaseModel):
@@ -92,17 +92,35 @@ def apply(data:ApplyConfig,x_agent_token:str|None=Header(default=None)):
    tool="wg-quick" if data.protocol=="wireguard" else "awg-quick"
    if not shutil.which(tool):raise RuntimeError(f"{tool} unavailable")
    if data.protocol=="wireguard" and shutil.which("wg") and shutil.which("wg-quick") and os.path.exists(f"/sys/class/net/{name}"):
-    try:
-     stripped=subprocess.run(["wg-quick","strip",path],capture_output=True,text=True,timeout=20,check=True)
-     subprocess.run(["wg","syncconf",name,"/dev/stdin"],input=stripped.stdout,capture_output=True,text=True,timeout=20,check=True)
-    except subprocess.CalledProcessError as e:
-     detail=e.stderr.strip() or e.stdout.strip() or str(e)
-     down=subprocess.run([tool,"down",path],capture_output=True,text=True,timeout=20)
+    # wg syncconf updates WireGuard keys/peers but not interface IP addresses,
+    # routes or MTU. Reusing a VPS with an old PRIMEVPN wg0 can therefore leave
+    # a perfectly valid handshake on the wrong tunnel subnet and break ping/data.
+    addr_match=re.search(r"(?m)^Address\s*=\s*([^\n]+)",data.config)
+    expected_addr=(addr_match.group(1).split(",")[0].strip() if addr_match else "")
+    addr_state=subprocess.run(["ip","-o","addr","show","dev",name],capture_output=True,text=True,timeout=10)
+    address_ok=bool(expected_addr) and expected_addr in addr_state.stdout
+    mtu_match=re.search(r"(?m)^MTU\s*=\s*(\d+)\s*$",data.config)
+    mtu_ok=True
+    if mtu_match:
+     link_state=subprocess.run(["ip","-o","link","show","dev",name],capture_output=True,text=True,timeout=10)
+     mtu_ok=bool(re.search(r"\bmtu\s+"+re.escape(mtu_match.group(1))+r"\b",link_state.stdout))
+    if not address_ok or not mtu_ok:
+     subprocess.run([tool,"down",path],capture_output=True,text=True,timeout=20)
+     subprocess.run(["ip","link","del",name],capture_output=True,text=True,timeout=10)
+     subprocess.run([tool,"up",path],capture_output=True,text=True,timeout=20,check=True)
+    else:
      try:
-      subprocess.run([tool,"up",path],capture_output=True,text=True,timeout=20,check=True)
-     except subprocess.CalledProcessError as up_error:
-      up_detail=up_error.stderr.strip() or up_error.stdout.strip() or str(up_error)
-      raise RuntimeError(f"WireGuard syncconf failed: {detail}; wg-quick up failed: {up_detail}") from up_error
+      stripped=subprocess.run(["wg-quick","strip",path],capture_output=True,text=True,timeout=20,check=True)
+      subprocess.run(["wg","syncconf",name,"/dev/stdin"],input=stripped.stdout,capture_output=True,text=True,timeout=20,check=True)
+     except subprocess.CalledProcessError as e:
+      detail=e.stderr.strip() or e.stdout.strip() or str(e)
+      subprocess.run([tool,"down",path],capture_output=True,text=True,timeout=20)
+      subprocess.run(["ip","link","del",name],capture_output=True,text=True,timeout=10)
+      try:
+       subprocess.run([tool,"up",path],capture_output=True,text=True,timeout=20,check=True)
+      except subprocess.CalledProcessError as up_error:
+       up_detail=up_error.stderr.strip() or up_error.stdout.strip() or str(up_error)
+       raise RuntimeError(f"WireGuard syncconf failed: {detail}; wg-quick up failed: {up_detail}") from up_error
    else:
     if os.path.exists(f"/sys/class/net/{name}"):
      subprocess.run([tool,"down",path],capture_output=True,text=True,timeout=20)
