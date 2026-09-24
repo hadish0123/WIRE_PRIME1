@@ -1,4 +1,5 @@
 from fastapi import APIRouter,Depends,HTTPException,Request
+import ipaddress,re
 from sqlalchemy.orm import Session
 from ..db import get_db
 from ..deps import current_admin,require_tenant_manager,require_permission
@@ -11,6 +12,21 @@ from ..services.openvpn_revoke import create_empty_crl
 from ..services.inbound_config import render_inbound
 from ..services.agent_client import apply as apply_agent,remove as remove_agent
 router=APIRouter()
+
+def _validate_network(data):
+ try:
+  network=ipaddress.ip_network(data.network,strict=False)
+  address=ipaddress.ip_interface(data.address)
+ except ValueError:
+  raise HTTPException(422,"Invalid inbound address/network")
+ if address.version!=network.version or address.ip not in network:
+  raise HTTPException(422,"Inbound address must belong to the inbound network")
+ if address.network!=network:
+  raise HTTPException(422,"Inbound address prefix must match the inbound network")
+ if data.protocol in {Protocol.wireguard,Protocol.amneziawg} and network.version!=4:
+  raise HTTPException(422,"Current WireGuard dataplane supports IPv4 tunnel networks only")
+ if not re.fullmatch(r"[A-Za-z0-9_.-]{1,80}",data.interface):
+  raise HTTPException(422,"Invalid interface name")
 
 def _node(db,inbound,tenant_id):
  node=db.query(Node).filter(Node.id==inbound.node_id,Node.tenant_id==tenant_id).first()
@@ -25,10 +41,12 @@ def list_inbounds(admin:Admin=Depends(require_permission("inbounds:read")),db:Se
 
 @router.post("",response_model=InboundOut)
 def create_inbound(data:InboundIn,request:Request,admin:Admin=Depends(require_tenant_manager),db:Session=Depends(get_db)):
+ _validate_network(data)
  node=db.query(Node).filter(Node.id==data.node_id,Node.tenant_id==admin.tenant_id).first()
  if not node:raise HTTPException(404,"Node not found")
  if not node.agent_url:raise HTTPException(409,"Node Agent is not configured")
  if db.query(Inbound).filter(Inbound.node_id==data.node_id,Inbound.listen_port==data.listen_port).first():raise HTTPException(409,"Port is already used on this node")
+ if db.query(Inbound).filter(Inbound.node_id==data.node_id,Inbound.interface==data.interface).first():raise HTTPException(409,"Interface is already used on this node")
  item=Inbound(tenant_id=admin.tenant_id,**data.model_dump());db.add(item);db.flush()
  if data.protocol in {Protocol.wireguard,Protocol.amneziawg}:
   private,public=wg_keypair()
@@ -45,6 +63,7 @@ def create_inbound(data:InboundIn,request:Request,admin:Admin=Depends(require_te
 
 @router.patch("/{inbound_id}",response_model=InboundOut)
 def update_inbound(inbound_id:str,data:InboundIn,request:Request,admin:Admin=Depends(require_tenant_manager),db:Session=Depends(get_db)):
+ _validate_network(data)
  item=db.query(Inbound).filter(Inbound.id==inbound_id,Inbound.tenant_id==admin.tenant_id).first()
  if not item:raise HTTPException(404,"Inbound not found")
  if item.protocol!=data.protocol:raise HTTPException(409,"Protocol changes require a new inbound")
@@ -52,6 +71,7 @@ def update_inbound(inbound_id:str,data:InboundIn,request:Request,admin:Admin=Dep
  if not node:raise HTTPException(404,"Node not found")
  if data.node_id!=item.node_id or data.listen_port!=item.listen_port:
   if db.query(Inbound).filter(Inbound.node_id==data.node_id,Inbound.listen_port==data.listen_port,Inbound.id!=item.id).first():raise HTTPException(409,"Port is already used on this node")
+ if db.query(Inbound).filter(Inbound.node_id==data.node_id,Inbound.interface==data.interface,Inbound.id!=item.id).first():raise HTTPException(409,"Interface is already used on this node")
  for k,v in data.model_dump().items():setattr(item,k,v)
  db.flush()
  try:

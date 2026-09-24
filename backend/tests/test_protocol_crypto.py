@@ -22,3 +22,22 @@ def test_tls_crypt_key_format():
  assert key.startswith("-----BEGIN OpenVPN Static key V1-----")
  assert key.endswith("-----END OpenVPN Static key V1-----\n")
  assert len(key.splitlines())==18
+
+
+def test_rendered_wireguard_runtime_expectations():
+ from app.services.agent_client import _expected_wireguard
+ from app.services.credentials import wg_public_key
+ server_private,server_public=wg_keypair()
+ _,peer_public=wg_keypair()
+ config=f"""[Interface]
+PrivateKey = {server_private}
+Address = 10.10.0.1/24
+ListenPort = 51820
+
+[Peer]
+PublicKey = {peer_public}
+AllowedIPs = 10.10.0.2/32
+"""
+ live_public,peers=_expected_wireguard(config)
+ assert live_public==server_public==wg_public_key(server_private)
+ assert peers==[(peer_public,"10.10.0.2/32")]
