@@ -64,7 +64,13 @@ fi
 
 if command -v apt-get >/dev/null 2>&1; then
   apt-get update -y
-  apt-get install -y curl openssl ca-certificates python3 python3-venv python3-pip iproute2 iptables iptables-persistent wireguard-tools openvpn
+  apt-get install -y curl openssl ca-certificates python3 python3-venv python3-pip iproute2 iptables iptables-persistent wireguard-tools openvpn software-properties-common python3-launchpadlib gnupg2 dkms build-essential "linux-headers-$(uname -r)"
+  if ! command -v awg >/dev/null 2>&1 || ! command -v awg-quick >/dev/null 2>&1; then
+    add-apt-repository -y ppa:amnezia/ppa
+    apt-get update -y
+    apt-get install -y amneziawg
+  fi
+  modprobe amneziawg >/dev/null 2>&1 || true
 elif command -v dnf >/dev/null 2>&1; then
   dnf install -y curl openssl ca-certificates python3 python3-pip iproute iptables wireguard-tools openvpn iptables-services
 elif command -v yum >/dev/null 2>&1; then
@@ -308,7 +314,7 @@ systemctl enable --now primevpn-node-refresh.timer >/dev/null
 echo "PRIMEVPN Node installed successfully and passed local/public preflight."
 echo "Node ID: $NODE_ID"
 echo "Agent: $AGENT_URL"
-echo "Local checks: WireGuard=$(command -v wg >/dev/null && echo OK || echo MISSING) OpenVPN=$(command -v openvpn >/dev/null && echo OK || echo MISSING)"
+echo "Local checks: WireGuard=$(command -v wg >/dev/null && echo OK || echo MISSING) AmneziaWG=$(command -v awg >/dev/null && command -v awg-quick >/dev/null && echo OK || echo MISSING) OpenVPN=$(command -v openvpn >/dev/null && echo OK || echo MISSING)"
 echo "Traffic validation: infrastructure READY; client traffic requires a real client handshake."
 """
 
@@ -344,7 +350,7 @@ def traffic_diagnostics(node_id: str, admin: Admin = Depends(current_admin), db:
     if not inbound: return {"status":"NO_INBOUND","reason":"No inbound exists on this node yet."}
     if inbound.protocol not in {Protocol.wireguard,Protocol.amneziawg}: return {"status":"UNSUPPORTED","reason":"Traffic diagnostics currently target the automatic WireGuard smoke test."}
     try:
-        diag=agent_call(node,"GET",f"diagnostics/wireguard/{inbound.interface}/{inbound.listen_port}",None,15)
+        diag=agent_call(node,"GET",f"diagnostics/wireguard/{inbound.interface}/{inbound.listen_port}?protocol={inbound.protocol.value}",None,15)
         peers=diag.get("peers") or []
         if not peers:
             return {"status":"NO_PEER","inbound_id":inbound.id,"reason":"Inbound is installed, but no WireGuard peer is installed. Create/issue a client credential."}
