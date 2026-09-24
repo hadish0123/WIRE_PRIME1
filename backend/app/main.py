@@ -32,11 +32,11 @@ async def _traffic_monitor():
                         continue
                     try:
                         try:
-                            diag=agent_client.call(node,"GET",f"diagnostics/wireguard/{inbound.interface}/{inbound.listen_port}",timeout=10)
+                            diag=agent_client.call(node,"GET",f"diagnostics/wireguard/{inbound.interface}/{inbound.listen_port}?protocol={inbound.protocol.value}",timeout=10)
                             print(f"VPN_PATH node={node.id} inbound={inbound.id} port={inbound.listen_port} live_port={diag.get('live_port')} live_public_key={diag.get('live_public_key')} input={diag.get('iptables_input_matches')} forward={diag.get('iptables_forward_matches')} nat={diag.get('iptables_masquerade_matches')} nft={diag.get('nft_udp_port_matches')} default_route={diag.get('default_route')} iface_addr={diag.get('interface_addresses')} iface_route={diag.get('interface_routes')}", flush=True)
                         except Exception as diag_exc:
                             print(f"VPN_PATH_DIAGNOSTICS_UNAVAILABLE node={node.id} inbound={inbound.id} error={diag_exc}", flush=True)
-                        data=agent_client.call(node,"GET",f"counters/wireguard/{inbound.interface}",timeout=10)
+                        data=agent_client.call(node,"GET",f"counters/wireguard/{inbound.interface}?protocol={inbound.protocol.value}",timeout=10)
                         peers=data.get("peers") or []
                         print(f"VPN_TRAFFIC node={node.id} inbound={inbound.id} interface={inbound.interface} listen_port={inbound.listen_port} peers={len(peers)}", flush=True)
                         for peer in peers:

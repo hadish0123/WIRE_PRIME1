@@ -108,6 +108,9 @@ def test_installer_scopes_redirect_and_exchanges_after_dependencies(tmp_path):
     subprocess.run(["bash","-n",str(path)],check=True)
     redirects=[line for line in script.splitlines() if "-I PREROUTING" in line and "REDIRECT" in line]
     assert redirects and all('-d "$PUBLIC_HOST"' in line for line in redirects)
+    assert "ppa:amnezia/ppa" in script
+    assert "apt-get install -y amneziawg" in script
+    assert "AmneziaWG=$(command -v awg" in script
     assert script.index('"$BASE/venv/bin/pip" install --no-cache-dir')<script.index('EXCHANGE="$(curl')
 
 

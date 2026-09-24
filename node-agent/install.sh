@@ -4,9 +4,16 @@ set -euo pipefail
 : "${PRIMEVPN_NODE_ID:?Set PRIMEVPN_NODE_ID to the PRIMEVPN Node UUID}"
 install -d -m 0700 /etc/primevpn /opt/primevpn-agent /run/primevpn
 cp -a . /opt/primevpn-agent/
+export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y python3 python3-venv python3-pip wireguard-tools openvpn
-if command -v awg >/dev/null 2>&1; then echo "AmneziaWG tools detected"; else echo "AmneziaWG tools not installed; install awg/awg-quick for AmneziaWG support"; fi
+apt-get install -y python3 python3-venv python3-pip wireguard-tools openvpn software-properties-common python3-launchpadlib gnupg2 dkms build-essential "linux-headers-$(uname -r)"
+if ! command -v awg >/dev/null 2>&1 || ! command -v awg-quick >/dev/null 2>&1; then
+  add-apt-repository -y ppa:amnezia/ppa
+  apt-get update
+  apt-get install -y amneziawg
+fi
+modprobe amneziawg >/dev/null 2>&1 || true
+command -v awg >/dev/null 2>&1 && command -v awg-quick >/dev/null 2>&1 || { echo "AmneziaWG installation failed" >&2; exit 15; }
 python3 -m venv /opt/primevpn-agent/.venv
 /opt/primevpn-agent/.venv/bin/pip install --upgrade pip
 /opt/primevpn-agent/.venv/bin/pip install .

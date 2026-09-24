@@ -3,7 +3,7 @@ from datetime import datetime,timezone
 from fastapi import FastAPI,Header,HTTPException
 from pydantic import BaseModel,Field
 from agent_security import verify_control_token,require_scope
-VERSION="100.0.13" # stable idempotent firewall sync with verified WireGuard routing
+VERSION="100.1.0" # full WireGuard + AmneziaWG runtime support
 
 app=FastAPI(title="PRIMEVPN Node Agent",version=VERSION)
 class WireGuardSmoke(BaseModel):
@@ -60,7 +60,36 @@ def auth(token,scope="read"):
   claims=verify_control_token(token);require_scope(claims,scope);return
 
  raise HTTPException(401,"Agent authentication failed")
-def caps():return {"wireguard":shutil.which("wg") is not None,"amneziawg":shutil.which("awg") is not None,"openvpn":shutil.which("openvpn") is not None}
+def _run_checked(cmd,timeout=180,env=None):
+ p=subprocess.run(cmd,capture_output=True,text=True,timeout=timeout,env=env)
+ if p.returncode:
+  raise RuntimeError((p.stderr or p.stdout or "command failed").strip())
+ return p
+
+def ensure_amneziawg():
+ if shutil.which("awg") and shutil.which("awg-quick"):
+  if shutil.which("modprobe"):
+   subprocess.run(["modprobe","amneziawg"],capture_output=True,text=True,timeout=30)
+  return
+ if not shutil.which("apt-get"):
+  raise RuntimeError("AmneziaWG is not installed and automatic installation is currently supported on Debian/Ubuntu nodes only")
+ env=os.environ.copy();env["DEBIAN_FRONTEND"]="noninteractive"
+ kernel=subprocess.run(["uname","-r"],capture_output=True,text=True,timeout=10,check=True).stdout.strip()
+ _run_checked(["apt-get","update","-y"],180,env)
+ _run_checked(["apt-get","install","-y","software-properties-common","python3-launchpadlib","gnupg2","dkms","build-essential",f"linux-headers-{kernel}"],300,env)
+ if not shutil.which("add-apt-repository"):
+  raise RuntimeError("add-apt-repository is unavailable after installing software-properties-common")
+ p=subprocess.run(["add-apt-repository","-y","ppa:amnezia/ppa"],capture_output=True,text=True,timeout=120,env=env)
+ if p.returncode and "already exists" not in ((p.stderr or "")+(p.stdout or "")).lower():
+  raise RuntimeError((p.stderr or p.stdout or "failed to add Amnezia PPA").strip())
+ _run_checked(["apt-get","update","-y"],180,env)
+ _run_checked(["apt-get","install","-y","amneziawg"],300,env)
+ if shutil.which("modprobe"):
+  _run_checked(["modprobe","amneziawg"],60,env)
+ if not shutil.which("awg") or not shutil.which("awg-quick"):
+  raise RuntimeError("AmneziaWG package installed but awg/awg-quick are unavailable")
+
+def caps():return {"wireguard":shutil.which("wg") is not None,"amneziawg":shutil.which("awg") is not None and shutil.which("awg-quick") is not None,"openvpn":shutil.which("openvpn") is not None}
 def allow_input_port(port,protocol):
  if not port or not str(port).isdigit(): return
  port=str(port)
@@ -126,6 +155,7 @@ def apply(data:ApplyConfig,x_agent_token:str|None=Header(default=None)):
   os.chmod(tmp,0o600);os.replace(tmp,path)
   validate_config(data)
   if data.protocol in {"wireguard","amneziawg"}:
+   if data.protocol=="amneziawg": ensure_amneziawg()
    tool="wg-quick" if data.protocol=="wireguard" else "awg-quick"
    prepare_wireguard_interface(name)
    if not shutil.which(tool):raise RuntimeError(f"{tool} unavailable")
@@ -163,7 +193,7 @@ def apply(data:ApplyConfig,x_agent_token:str|None=Header(default=None)):
     if os.path.exists(f"/sys/class/net/{name}"):
      subprocess.run([tool,"down",path],capture_output=True,text=True,timeout=20)
     subprocess.run([tool,"up",path],capture_output=True,text=True,timeout=20,check=True)
-   if data.protocol=="wireguard":
+   if data.protocol in {"wireguard","amneziawg"}:
     if shutil.which("sysctl"): subprocess.run(["sysctl","-w","net.ipv4.ip_forward=1"],capture_output=True,text=True,timeout=10,check=True)
     if shutil.which("iptables"):
      out=subprocess.run(["ip","route","show","default"],capture_output=True,text=True,timeout=10,check=True).stdout.split()
@@ -234,8 +264,10 @@ def apply(data:ApplyConfig,x_agent_token:str|None=Header(default=None)):
   except FileNotFoundError:pass
   raise HTTPException(502,f"Apply failed and previous configuration was restored: {e}")
 
-def _wg_dump(interface):
- p=subprocess.run(["wg","show",interface,"dump"],capture_output=True,text=True,timeout=10)
+def _wg_dump(interface,protocol="wireguard"):
+ tool="awg" if protocol=="amneziawg" else "wg"
+ if not shutil.which(tool): raise RuntimeError(f"{tool} unavailable")
+ p=subprocess.run([tool,"show",interface,"dump"],capture_output=True,text=True,timeout=10)
  if p.returncode!=0: raise RuntimeError(p.stderr.strip() or "wg dump failed")
  rows=p.stdout.splitlines()
  if not rows: raise RuntimeError("empty wg dump")
@@ -362,6 +394,11 @@ def diagnostics_preflight(x_agent_token:str|None=Header(default=None)):
  # WIREGUARD
  wg_ok=shutil.which("wg") is not None and shutil.which("wg-quick") is not None
  check("wireguard_tools",wg_ok,"wg/wg-quick installed" if wg_ok else "wg and/or wg-quick missing")
+ awg_ok=shutil.which("awg") is not None and shutil.which("awg-quick") is not None
+ check("amneziawg_tools",awg_ok,"awg/awg-quick installed" if awg_ok else "awg and/or awg-quick missing",False)
+ if awg_ok and shutil.which("modprobe"):
+  subprocess.run(["modprobe","amneziawg"],capture_output=True,text=True,timeout=30)
+ check("amneziawg_kernel",os.path.exists("/sys/module/amneziawg"),"AmneziaWG kernel module available" if os.path.exists("/sys/module/amneziawg") else "AmneziaWG kernel module not loaded",False)
  rc,mods,_=run(["sh","-c","command -v modprobe >/dev/null && modprobe wireguard >/dev/null 2>&1; lsmod | grep '^wireguard ' || true"])
  check("wireguard_kernel",rc==0 and ("wireguard" in mods or os.path.exists("/sys/module/wireguard")),"WireGuard kernel module available",False)
  # FIREWALL
@@ -392,10 +429,11 @@ def diagnostics_preflight(x_agent_token:str|None=Header(default=None)):
          "summary":"NODE READY: infrastructure baseline passed" if ready else "NODE NOT READY: critical preflight checks failed"}
 
 @app.get("/diagnostics/wireguard/{interface}/{port}")
-def wireguard_diagnostics(interface:str,port:int,x_agent_token:str|None=Header(default=None)):
+def wireguard_diagnostics(interface:str,port:int,protocol:str="wireguard",x_agent_token:str|None=Header(default=None)):
  auth(x_agent_token,"read");safe_interface(interface)
  if port<1 or port>65535: raise HTTPException(400,"Invalid UDP port")
- try: runtime=_wg_dump(interface)
+ if protocol not in {"wireguard","amneziawg"}: raise HTTPException(400,"Invalid WireGuard protocol")
+ try: runtime=_wg_dump(interface,protocol)
  except Exception as e: runtime={"error":str(e),"public_key":None,"listen_port":None,"peers":[]}
  iptables_rules=[];forward_rules=[];nat_rules=[]
  if shutil.which("iptables"):
@@ -417,10 +455,12 @@ def wireguard_diagnostics(interface:str,port:int,x_agent_token:str|None=Header(d
  return {"interface":interface,"configured_port":port,"live_port":runtime.get("listen_port"),"live_public_key":runtime.get("public_key"),"peer_count":len(runtime.get("peers",[])),"peers":runtime.get("peers",[]),"iptables_input_matches":iptables_rules,"iptables_forward_matches":forward_rules,"iptables_masquerade_matches":nat_rules,"nft_udp_port_matches":nft_lines[:20],"default_route":(route.stdout.strip() if route and route.returncode==0 else None),"interface_addresses":(iface_addr.stdout.strip() if iface_addr and iface_addr.returncode==0 else None),"interface_routes":(iface_route.stdout.strip() if iface_route and iface_route.returncode==0 else None),"runtime_error":runtime.get("error")}
 
 @app.get("/counters/wireguard/{interface}")
-def counters(interface:str,x_agent_token:str|None=Header(default=None)):
+def counters(interface:str,protocol:str="wireguard",x_agent_token:str|None=Header(default=None)):
  auth(x_agent_token,"read");safe_interface(interface)
- if not shutil.which("wg"):raise HTTPException(503,"WireGuard unavailable")
- p=subprocess.run(["wg","show",interface,"dump"],capture_output=True,text=True,timeout=10)
+ if protocol not in {"wireguard","amneziawg"}: raise HTTPException(400,"Invalid WireGuard protocol")
+ tool="awg" if protocol=="amneziawg" else "wg"
+ if not shutil.which(tool):raise HTTPException(503,f"{tool} unavailable")
+ p=subprocess.run([tool,"show",interface,"dump"],capture_output=True,text=True,timeout=10)
  if p.returncode:raise HTTPException(503,p.stderr.strip() or "Unable to read counters")
  peers=[]
  for line in p.stdout.splitlines()[1:]:
@@ -449,11 +489,14 @@ def openvpn_counters(instance:str,x_agent_token:str|None=Header(default=None)):
 class RevokePeer(BaseModel):
  interface:str=Field(min_length=1,max_length=80)
  public_key:str=Field(min_length=43,max_length=44)
+ protocol:str="wireguard"
 @app.post("/peers/revoke")
 def revoke_peer(data:RevokePeer,x_agent_token:str|None=Header(default=None)):
  auth(x_agent_token,"write");safe_interface(data.interface)
- if not shutil.which("wg"):raise HTTPException(503,"WireGuard unavailable")
- p=subprocess.run(["wg","set",data.interface,"peer",data.public_key,"remove"],capture_output=True,text=True,timeout=15)
+ if data.protocol not in {"wireguard","amneziawg"}: raise HTTPException(400,"Invalid WireGuard protocol")
+ tool="awg" if data.protocol=="amneziawg" else "wg"
+ if not shutil.which(tool):raise HTTPException(503,f"{tool} unavailable")
+ p=subprocess.run([tool,"set",data.interface,"peer",data.public_key,"remove"],capture_output=True,text=True,timeout=15)
  if p.returncode:raise HTTPException(502,p.stderr.strip() or "Peer revoke failed")
  path=f"/etc/primevpn/{data.interface}.conf"
  if os.path.exists(path):
