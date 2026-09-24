@@ -345,39 +345,6 @@ async def register_agent(node_id: str, body: AgentRegistration, request: Request
             db.rollback()
             raise HTTPException(502,f"Automatic node smoke-test setup failed: {exc}")
     return {"status":"READY","node_id":node.id,"auto_setup":auto_setup}
-; then
-      iptables -t nat -C OUTPUT -p tcp -d "$PUBLIC_HOST" --dport "$AGENT_PUBLIC_PORT" -j REDIRECT --to-ports "$PORT" >/dev/null 2>&1 || \
-        iptables -t nat -I OUTPUT -p tcp -d "$PUBLIC_HOST" --dport "$AGENT_PUBLIC_PORT" -j REDIRECT --to-ports "$PORT"
-    fi
-  fi
-  netfilter-persistent save >/dev/null 2>&1 || true
-fi
-AGENT_URL="https://$PUBLIC_HOST:$AGENT_PUBLIC_PORT"
-if ! curl -kfsS --max-time 8 "$AGENT_URL/healthz" >/dev/null 2>&1; then
-  echo "NODE AGENT PUBLIC REACHABILITY FAILED: $AGENT_URL/healthz"
-  ss -ltnp 2>/dev/null || true
-  iptables -t nat -L PREROUTING -n -v 2>/dev/null || true
-  iptables -t nat -L OUTPUT -n -v 2>/dev/null || true
-  iptables -L INPUT -n -v 2>/dev/null || true
-  exit 31
-fi
-PREFLIGHT="$(curl -kfsS --max-time 10 "https://127.0.0.1:$PORT/diagnostics/preflight" -H "X-Agent-Token: $AGENT_TOKEN")"
-printf '%s' "$PREFLIGHT" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("ready") is True, " | ".join(x.get("name")+": "+x.get("detail","") for x in d.get("issues",[]))' || {
-  echo "NODE PREFLIGHT FAILED"
-  printf '%s\n' "$PREFLIGHT"
-  echo "The node was NOT registered as READY."
-  echo "Fix the reported checks and rerun this same installer command."
-  exit 30
-}
-echo "NODE PREFLIGHT: PASS"
-printf '%s\n' "$PREFLIGHT" | python3 -m json.tool 2>/dev/null || true
-
-HEALTH="$(curl -kfsS --max-time 10 "https://127.0.0.1:$PORT/health" -H "X-Agent-Token: $AGENT_TOKEN")"
-printf '%s' "$HEALTH" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("status")=="READY"; assert d.get("capabilities",{}).get("wireguard") is True; assert d.get("capabilities",{}).get("openvpn") is True' >/dev/null
-CAPABILITIES="$(printf '%s' "$HEALTH" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin).get("capabilities") or {},separators=(",",":")))')"
-REG_BODY="$(python3 -c 'import json,sys; print(json.dumps({"agent_url":sys.argv[1],"version":"100.0.5","capabilities":json.loads(sys.argv[2])},separators=(",",":")))' "$AGENT_URL" "$CAPABILITIES")"
-curl -kfsS --max-time 20 -X POST "$BACKEND/api/v1/provisioning/$NODE_ID/register" -H "Authorization: Bearer $AGENT_TOKEN" -H 'Content-Type: application/json' --data "$REG_BODY" >/dev/null
-echo "PRIMEVPN Node installed successfully and passed local preflight."
 echo "Node ID: $NODE_ID"
 echo "Agent: $AGENT_URL"
 echo "Local checks: WireGuard=$(command -v wg >/dev/null && echo OK || echo MISSING) OpenVPN=$(command -v openvpn >/dev/null && echo OK || echo MISSING)"
