@@ -3,7 +3,7 @@ from datetime import datetime,timezone
 from fastapi import FastAPI,Header,HTTPException
 from pydantic import BaseModel,Field
 from agent_security import verify_control_token,require_scope
-VERSION="100.0.12" # stable idempotent firewall sync with verified WireGuard routing
+VERSION="100.0.13" # stable idempotent firewall sync with verified WireGuard routing
 
 app=FastAPI(title="PRIMEVPN Node Agent",version=VERSION)
 class WireGuardSmoke(BaseModel):
@@ -18,8 +18,43 @@ class ApplyConfig(BaseModel):
  config:str=Field(min_length=1,max_length=200000)
  files:dict[str,str]=Field(default_factory=dict)
 def safe_interface(v):
- if not re.fullmatch(r"[A-Za-z0-9_.-]{1,80}",v):raise HTTPException(400,"Invalid interface")
+ if not re.fullmatch(r"[A-Za-z0-9_-]{1,15}",v):raise HTTPException(400,"Invalid interface")
  return v
+def prepare_wireguard_interface(name):
+ # Prevent broad cloud-init/networkd rules from removing wg-quick addresses.
+ directory="/etc/systemd/network"
+ os.makedirs(directory,exist_ok=True)
+ with open(f"{directory}/00-primevpn-{name}.network","w",encoding="utf-8") as f:
+  f.write(f"[Match]\nName={name}\n[Link]\nUnmanaged=yes\n")
+ if shutil.which("networkctl") and shutil.which("systemctl"):
+  state=subprocess.run(["systemctl","is-active","systemd-networkd"],capture_output=True,text=True,timeout=10)
+  if state.returncode==0:
+   subprocess.run(["networkctl","reload"],capture_output=True,text=True,timeout=10,check=True)
+   if os.path.exists(f"/sys/class/net/{name}"):
+    subprocess.run(["networkctl","reconfigure",name],capture_output=True,text=True,timeout=10)
+
+
+def persist_wireguard_interface(name,tool,path):
+ if not shutil.which("systemctl"):return
+ unit=f"primevpn-wireguard-{name}.service"
+ executable=shutil.which(tool)
+ content=("[Unit]\nDescription=PRIMEVPN WireGuard interface\n"
+          "After=network-online.target netfilter-persistent.service\nWants=network-online.target\n"
+          f"[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart={executable} up {path}\n"
+          f"ExecStop={executable} down {path}\n[Install]\nWantedBy=multi-user.target\n")
+ with open(f"/etc/systemd/system/{unit}","w",encoding="utf-8") as f:f.write(content)
+ subprocess.run(["systemctl","daemon-reload"],capture_output=True,text=True,timeout=10,check=True)
+ subprocess.run(["systemctl","enable",unit],capture_output=True,text=True,timeout=10,check=True)
+
+
+def without_peer(config,public_key):
+ blocks=re.split(r"(?m)^\[Peer\]\s*\n",config)
+ kept=[]
+ for block in blocks[1:]:
+  match=re.search(r"(?m)^PublicKey\s*=\s*(\S+)\s*$",block)
+  if not match or match.group(1)!=public_key:kept.append(block)
+ return blocks[0]+"".join("[Peer]\n"+block for block in kept)
+
 def auth(token,scope="read"):
  if token and token.count(".")==2:
   claims=verify_control_token(token);require_scope(claims,scope);return
@@ -92,6 +127,7 @@ def apply(data:ApplyConfig,x_agent_token:str|None=Header(default=None)):
   validate_config(data)
   if data.protocol in {"wireguard","amneziawg"}:
    tool="wg-quick" if data.protocol=="wireguard" else "awg-quick"
+   prepare_wireguard_interface(name)
    if not shutil.which(tool):raise RuntimeError(f"{tool} unavailable")
    if data.protocol=="wireguard" and shutil.which("wg") and shutil.which("wg-quick") and os.path.exists(f"/sys/class/net/{name}"):
     # wg syncconf updates WireGuard keys/peers but not interface IP addresses,
@@ -167,6 +203,7 @@ def apply(data:ApplyConfig,x_agent_token:str|None=Header(default=None)):
         elif os.path.isdir("/etc/sysconfig") and shutil.which("iptables-save"):
          with open("/etc/sysconfig/iptables","w",encoding="utf-8") as f:
           subprocess.run(["iptables-save"],stdout=f,text=True,timeout=20,check=True)
+   persist_wireguard_interface(name,tool,path)
   elif data.protocol=="openvpn":
    if not shutil.which("systemctl"):raise RuntimeError("systemctl unavailable")
    server_dir="/etc/openvpn/server";os.makedirs(server_dir,mode=0o700,exist_ok=True)
@@ -208,7 +245,7 @@ def _wg_dump(interface):
   parts=line.split("\t")
   if len(parts)>=8:
    peers.append({"public_key":parts[0],"preshared_key_configured":parts[1] != "0000000000000000000000000000000000000000000000000000000000000000","endpoint":parts[2],"allowed_ips":parts[3],"last_handshake":int(parts[4]),"bytes_received":int(parts[5]),"bytes_sent":int(parts[6]),"persistent_keepalive":0 if parts[7] == "off" else int(parts[7])})
- return {"public_key":head[0],"private_key_present":head[1] != "(none)","listen_port":int(head[2]),"fwmark":head[3],"peers":peers}
+ return {"public_key":head[1],"private_key_present":head[0] != "(none)","listen_port":int(head[2]),"fwmark":head[3],"peers":peers}
 
 @app.post("/diagnostics/wireguard-smoke")
 def wireguard_smoke(data:WireGuardSmoke,x_agent_token:str|None=Header(default=None)):
@@ -418,6 +455,11 @@ def revoke_peer(data:RevokePeer,x_agent_token:str|None=Header(default=None)):
  if not shutil.which("wg"):raise HTTPException(503,"WireGuard unavailable")
  p=subprocess.run(["wg","set",data.interface,"peer",data.public_key,"remove"],capture_output=True,text=True,timeout=15)
  if p.returncode:raise HTTPException(502,p.stderr.strip() or "Peer revoke failed")
+ path=f"/etc/primevpn/{data.interface}.conf"
+ if os.path.exists(path):
+  with open(path,encoding="utf-8") as f:config=without_peer(f.read(),data.public_key)
+  with open(path+".new","w",encoding="utf-8") as f:f.write(config)
+  os.chmod(path+".new",0o600);os.replace(path+".new",path)
  return {"revoked":True,"interface":data.interface,"public_key":data.public_key}
 
 class OpenVPNRevoke(BaseModel):
@@ -448,6 +490,8 @@ def remove(data:RemoveConfig,x_agent_token:str|None=Header(default=None)):
  try:
   if data.protocol in {"wireguard","amneziawg"}:
    tool="wg-quick" if data.protocol=="wireguard" else "awg-quick"
+   if shutil.which("systemctl"):
+    subprocess.run(["systemctl","disable","--now",f"primevpn-wireguard-{name}.service"],capture_output=True,text=True,timeout=20)
    if shutil.which(tool): subprocess.run([tool,"down",path],capture_output=True,text=True,timeout=20)
   elif data.protocol=="openvpn" and shutil.which("systemctl"):
    subprocess.run(["systemctl","stop",f"openvpn-server@{name}"],capture_output=True,text=True,timeout=30)

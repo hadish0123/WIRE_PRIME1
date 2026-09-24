@@ -1,5 +1,8 @@
 from __future__ import annotations
-from ..models import Inbound, InboundWireGuard, InboundOpenVPN, Node, Protocol
+import ipaddress
+from datetime import datetime, timezone
+from sqlalchemy import or_
+from ..models import Inbound, InboundWireGuard, InboundOpenVPN, Node, Protocol, Client, ClientCredential, Device, ResourceState
 from ..security import decrypt_secret
 from .credentials import wg_public_key
 
@@ -22,6 +25,21 @@ def render_inbound(inbound:Inbound,node:Node,db):
         if inbound.mtu: lines.append(f"MTU = {inbound.mtu}")
         if inbound.protocol==Protocol.amneziawg:
             lines += [f"Jc = {wg.amnezia_junk or 7}",f"Jmin = {wg.amnezia_init or 8}",f"Jmax = {wg.amnezia_response or 80}",f"S1 = {wg.amnezia_s1}",f"S2 = {wg.amnezia_s2}",f"S3 = {wg.amnezia_s3}",f"S4 = {wg.amnezia_s4}",f"H1 = {wg.amnezia_h1}",f"H2 = {wg.amnezia_h2}",f"H3 = {wg.amnezia_h3}",f"H4 = {wg.amnezia_h4}"]
+        now=datetime.now(timezone.utc)
+        peers=(db.query(ClientCredential,Device,Client)
+               .join(Client,Client.id==ClientCredential.client_id)
+               .outerjoin(Device,Device.id==ClientCredential.device_id)
+               .filter(Client.inbound_id==inbound.id,Client.tenant_id==inbound.tenant_id,
+                       Client.status==ResourceState.active,ClientCredential.revoked_at.is_(None),
+                       or_(Client.expires_at.is_(None),Client.expires_at>now),
+                       or_(ClientCredential.expires_at.is_(None),ClientCredential.expires_at>now))
+               .order_by(ClientCredential.id).all())
+        for credential,device,client in peers:
+            address=device.assigned_address if device and device.assigned_address else client.assigned_address
+            peer_ip=ipaddress.ip_interface(address).ip
+            if peer_ip not in ipaddress.ip_network(inbound.network,strict=False) or peer_ip==ipaddress.ip_interface(inbound.address).ip:
+                raise RuntimeError("Client address is outside the inbound network or equals the server address")
+            lines += ["","[Peer]",f"PublicKey = {credential.public_identifier}",f"AllowedIPs = {peer_ip}/32"]
         return {"protocol":inbound.protocol.value,"interface":inbound.interface,"config":"\n".join(lines)+"\n","files":{}}
     ov=db.query(InboundOpenVPN).filter(InboundOpenVPN.inbound_id==inbound.id).first()
     if not ov or not ov.server_key_encrypted or not ov.ca_pem or not ov.server_cert_pem or not ov.tls_crypt_key_encrypted:

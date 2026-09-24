@@ -2,7 +2,7 @@ import json,ipaddress
 from fastapi import APIRouter,Depends,HTTPException
 from sqlalchemy.orm import Session
 from ..db import get_db
-from ..deps import current_admin,require_tenant_manager,can_access_client
+from ..deps import current_admin,require_permission,can_access_client
 from ..models import Admin,Client,Device,Inbound,InboundOpenVPN,InboundWireGuard,ClientCredential,ConfigArtifact,Protocol,Node,Quota,TrafficUsage
 from ..security import encrypt_secret,decrypt_secret
 from ..services.credentials import wg_keypair,wg_public_key,openvpn_ca,openvpn_server,openvpn_client,openvpn_tls_crypt_key,fingerprint
@@ -26,9 +26,9 @@ def allocate_device_address(db,client):
  raise HTTPException(409,"No free device address remains")
 
 @router.post("/{client_id}/credentials")
-def issue(client_id:str,admin:Admin=Depends(require_tenant_manager),db:Session=Depends(get_db)):
+def issue(client_id:str,admin:Admin=Depends(require_permission("clients:update")),db:Session=Depends(get_db)):
  c=db.query(Client).filter(Client.id==client_id,Client.tenant_id==admin.tenant_id).first()
- if not c:raise HTTPException(404,"Client not found")
+ if not can_access_client(db,admin,c):raise HTTPException(404,"Client not found")
  now=__import__("datetime").datetime.now(__import__("datetime").timezone.utc)
  client_exp=c.expires_at
  if client_exp and client_exp.tzinfo is None:client_exp=client_exp.replace(tzinfo=__import__("datetime").timezone.utc)
@@ -41,9 +41,9 @@ def issue(client_id:str,admin:Admin=Depends(require_tenant_manager),db:Session=D
   used=int(db.query(__import__("sqlalchemy").func.coalesce(__import__("sqlalchemy").func.sum(TrafficUsage.bytes_in+TrafficUsage.bytes_out),0)).filter(TrafficUsage.client_id==c.id,TrafficUsage.tenant_id==admin.tenant_id).scalar() or 0)
   if qexp and qexp<=now:raise HTTPException(409,"Client quota has expired")
   if q.total_bytes is not None and used>=q.total_bytes:raise HTTPException(409,"Client traffic quota is exhausted")
-  if q.max_devices is not None and db.query(Device).filter(Device.client_id==c.id,Device.tenant_id==admin.tenant_id).count()>=q.max_devices:raise HTTPException(409,"Maximum device limit reached")
- inbound=db.query(Inbound).filter(Inbound.id==c.inbound_id,Inbound.tenant_id==admin.tenant_id).first()
+ inbound=db.query(Inbound).filter(Inbound.id==c.inbound_id,Inbound.tenant_id==admin.tenant_id).with_for_update().first()
  if not inbound:raise HTTPException(404,"Inbound not found")
+ if not inbound.enabled or inbound.desired_state!="ACTIVE":raise HTTPException(409,"Inbound is disabled")
  node=db.query(Node).filter(Node.id==inbound.node_id,Node.tenant_id==admin.tenant_id).first()
  if not node:raise HTTPException(404,"Node not found")
  try:
@@ -53,6 +53,8 @@ def issue(client_id:str,admin:Admin=Depends(require_tenant_manager),db:Session=D
  except ValueError:
   if not node.address or any(ch.isspace() for ch in node.address) or node.address.lower() in {"localhost","localhost.localdomain"}:
    raise HTTPException(409,"Node endpoint hostname is invalid")
+
+ endpoint_host=f"[{node.address}]" if ":" in node.address else node.address
 
  # Download is idempotent: do not create another device/peer when the user
  # requests the same client's config again.
@@ -77,15 +79,13 @@ def issue(client_id:str,admin:Admin=Depends(require_tenant_manager),db:Session=D
    awg_params=""
    if inbound.protocol==Protocol.amneziawg:
     awg_params=f"\nJc = 7\nJmin = 8\nJmax = 80\nS1 = {wg.amnezia_s1}\nS2 = {wg.amnezia_s2}\nS3 = {wg.amnezia_s3}\nS4 = {wg.amnezia_s4}\nH1 = {wg.amnezia_h1}\nH2 = {wg.amnezia_h2}\nH3 = {wg.amnezia_h3}\nH4 = {wg.amnezia_h4}"
-   payload=f"[Interface]\nPrivateKey = {material['private_key']}\nAddress = {device.assigned_address}\nDNS = {inbound.dns or '1.1.1.1'}{awg_params}\n\n[Peer]\nPublicKey = {wg.server_public_key}\nAllowedIPs = 0.0.0.0/0\nEndpoint = {node.address}:{inbound.listen_port}\nPersistentKeepalive = 25\n"
+   payload=f"[Interface]\nPrivateKey = {material['private_key']}\nAddress = {device.assigned_address}\nDNS = {inbound.dns or '1.1.1.1'}{awg_params}\n\n[Peer]\nPublicKey = {wg.server_public_key}\nAllowedIPs = 0.0.0.0/0\nEndpoint = {endpoint_host}:{inbound.listen_port}\nPersistentKeepalive = 25\n"
    rendered=render_inbound(inbound,node,db)
-   creds=db.query(ClientCredential,Device).join(Device,Device.id==ClientCredential.device_id).join(Client,Client.id==ClientCredential.client_id).filter(Client.inbound_id==inbound.id,Client.tenant_id==c.tenant_id,ClientCredential.revoked_at.is_(None)).all()
-   peers=[]
-   for cred_row,dev in creds:
-    if not dev.assigned_address: continue
-    peer_ip=f"{ipaddress.ip_interface(dev.assigned_address).ip}/32"
-    peers += ["","[Peer]",f"PublicKey = {cred_row.public_identifier}",f"AllowedIPs = {peer_ip}"]
-   apply_agent(node,rendered["protocol"],rendered["interface"],rendered["config"].rstrip()+"\n"+"\n".join(peers)+"\n",rendered.get("files"))
+   try:
+    apply_agent(node,rendered["protocol"],rendered["interface"],rendered["config"],rendered.get("files"))
+   except Exception as exc:
+    db.rollback()
+    raise HTTPException(502,f"WireGuard apply failed: {exc}")
    refreshed=create_artifact(db,c,inbound.protocol,payload)
    return {"credential_id":existing_cred.id,"device_id":existing_cred.device_id,
            "artifact_id":refreshed.id,"public_identifier":existing_cred.public_identifier,
@@ -103,6 +103,8 @@ def issue(client_id:str,admin:Admin=Depends(require_tenant_manager),db:Session=D
     return {"credential_id":existing_cred.id,"device_id":existing_cred.device_id,
             "artifact_id":refreshed.id,"public_identifier":existing_cred.public_identifier,
             "fingerprint":existing_cred.fingerprint,"expires_at":refreshed.expires_at}
+ if q and q.max_devices is not None and db.query(Device).join(ClientCredential,ClientCredential.device_id==Device.id).filter(Device.client_id==c.id,ClientCredential.revoked_at.is_(None)).count()>=q.max_devices:
+  raise HTTPException(409,"Maximum device limit reached")
  device=Device(tenant_id=c.tenant_id,client_id=c.id,fingerprint=fingerprint(c.id+str(__import__("time").time_ns())))
  if inbound.protocol in {Protocol.wireguard,Protocol.amneziawg}:
   server_ip=ipaddress.ip_interface(inbound.address).ip
@@ -124,7 +126,7 @@ def issue(client_id:str,admin:Admin=Depends(require_tenant_manager),db:Session=D
   awg_params=""
   if inbound.protocol==Protocol.amneziawg:
    awg_params=f"\nJc = 7\nJmin = 8\nJmax = 80\nS1 = {existing.amnezia_s1}\nS2 = {existing.amnezia_s2}\nS3 = {existing.amnezia_s3}\nS4 = {existing.amnezia_s4}\nH1 = {existing.amnezia_h1}\nH2 = {existing.amnezia_h2}\nH3 = {existing.amnezia_h3}\nH4 = {existing.amnezia_h4}"
-  payload=f"[Interface]\nPrivateKey = {private}\nAddress = {device.assigned_address}\nDNS = {inbound.dns or '1.1.1.1'}{awg_params}\n\n[Peer]\nPublicKey = {existing.server_public_key}\nAllowedIPs = 0.0.0.0/0\nEndpoint = {node.address}:{inbound.listen_port}\nPersistentKeepalive = 25\n"
+  payload=f"[Interface]\nPrivateKey = {private}\nAddress = {device.assigned_address}\nDNS = {inbound.dns or '1.1.1.1'}{awg_params}\n\n[Peer]\nPublicKey = {existing.server_public_key}\nAllowedIPs = 0.0.0.0/0\nEndpoint = {endpoint_host}:{inbound.listen_port}\nPersistentKeepalive = 25\n"
  else:
   cert_key_source=db.query(InboundOpenVPN).filter(InboundOpenVPN.inbound_id==inbound.id).first()
   ov=cert_key_source
@@ -142,15 +144,8 @@ def issue(client_id:str,admin:Admin=Depends(require_tenant_manager),db:Session=D
  db.add(cred);db.flush()
  if inbound.protocol in {Protocol.wireguard,Protocol.amneziawg}:
   rendered=render_inbound(inbound,node,db)
-  creds=db.query(ClientCredential,Device).join(Device,Device.id==ClientCredential.device_id).join(Client,Client.id==ClientCredential.client_id).filter(Client.inbound_id==inbound.id,Client.tenant_id==c.tenant_id,ClientCredential.revoked_at.is_(None)).all()
-  peers=[]
-  for cred_row,dev in creds:
-   if not dev.assigned_address: continue
-   peer_ip=f"{ipaddress.ip_interface(dev.assigned_address).ip}/32"
-   peers += ["","[Peer]",f"PublicKey = {cred_row.public_identifier}",f"AllowedIPs = {peer_ip}"]
-  full_config=rendered["config"].rstrip()+"\n"+"\n".join(peers)+"\n"
   try:
-   apply_agent(node,rendered["protocol"],rendered["interface"],full_config,rendered.get("files"))
+   apply_agent(node,rendered["protocol"],rendered["interface"],rendered["config"],rendered.get("files"))
   except Exception as e:
    db.rollback()
    raise HTTPException(502,f"WireGuard apply failed: {e}")

@@ -51,3 +51,22 @@ def test_wg_dump_reports_public_key_not_private_key(monkeypatch):
     assert result["public_key"] == "PUBLIC_KEY"
     assert result["private_key_present"] is True
     assert result["listen_port"] == 51820
+
+
+def test_revoke_removes_only_target_from_persistent_config():
+    import app as agent_app
+    config="[Interface]\nPrivateKey = server\n\n[Peer]\nPublicKey = one\nAllowedIPs = 10.0.0.2/32\n\n[Peer]\nPublicKey = two\nAllowedIPs = 10.0.0.3/32\n"
+    result=agent_app.without_peer(config,"one")
+    assert "PrivateKey = server" in result
+    assert "PublicKey = one" not in result
+    assert "PublicKey = two" in result
+    assert result.count("[Peer]")==1
+
+
+def test_interface_rejects_paths_and_overlong_names():
+    import app as agent_app
+    import pytest
+    from fastapi import HTTPException
+    for name in ["../etc/passwd","wg0;reboot","a"*16]:
+        with pytest.raises(HTTPException):agent_app.safe_interface(name)
+    assert agent_app.safe_interface("wg0")=="wg0"
