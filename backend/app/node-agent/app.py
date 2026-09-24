@@ -212,8 +212,10 @@ def wireguard_smoke(data:WireGuardSmoke,x_agent_token:str|None=Header(default=No
    if not handshake: raise RuntimeError("Smoke client handshake did not complete")
    p=subprocess.run(["wg","show","wg-smoke","transfer"],capture_output=True,text=True,timeout=5,check=True)
    parts=p.stdout.split(); before_rx=int(parts[1]) if len(parts)>=2 else 0; before_tx=int(parts[2]) if len(parts)>=3 else 0
-   ping=subprocess.run(["ping","-4","-c","2","-W","3","-I",str(addr.ip),"1.1.1.1"],capture_output=True,text=True,timeout=10)
-   curl=subprocess.run(["curl","-4","-fsS","--interface",str(addr.ip),"--max-time","10","https://api.ipify.org"],capture_output=True,text=True,timeout=15)
+   route_check=subprocess.run(["ip","route","get","1.1.1.1","from",str(addr.ip)],capture_output=True,text=True,timeout=10)
+   if route_check.returncode!=0: raise RuntimeError("Smoke client policy route failed: "+(route_check.stderr.strip() or route_check.stdout.strip()))
+   ping=subprocess.run(["ping","-4","-c","2","-W","3","-I","wg-smoke","1.1.1.1"],capture_output=True,text=True,timeout=10)
+   curl=subprocess.run(["curl","-4","-fsS","--interface","wg-smoke","--max-time","10","https://api.ipify.org"],capture_output=True,text=True,timeout=15)
    p=subprocess.run(["wg","show","wg-smoke","transfer"],capture_output=True,text=True,timeout=5,check=True)
    parts=p.stdout.split(); after_rx=int(parts[1]) if len(parts)>=2 else 0; after_tx=int(parts[2]) if len(parts)>=3 else 0
    if ping.returncode!=0: raise RuntimeError("Smoke client reached WireGuard but Internet ping failed: "+(ping.stderr.strip() or ping.stdout.strip()))
