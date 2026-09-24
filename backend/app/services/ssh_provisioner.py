@@ -3,8 +3,8 @@ import asyncssh
 import httpx
 import shlex
 
-AGENT_REF="2c7854ee186a14dce3d307e2756b62d00b78d90d"
-RAW_BASE=f"https://raw.githubusercontent.com/hadish0123/WIRE_PRIME1/{AGENT_REF}/node-agent"
+AGENT_REF="main"
+RAW_BASE=f"https://raw.githubusercontent.com/hadish0123/WIRE_PRIME1/{AGENT_REF}/backend/app/node-agent"
 
 class SSHProvisionError(RuntimeError):
     pass
@@ -20,17 +20,22 @@ export DEBIAN_FRONTEND=noninteractive
 
 if command -v apt-get >/dev/null 2>&1; then
   apt-get update -y
-  apt-get install -y python3 python3-venv python3-pip curl openssl iproute2 wireguard-tools openvpn
+  apt-get install -y python3 python3-venv python3-pip curl openssl iproute2 iptables iptables-persistent wireguard-tools openvpn
 elif command -v dnf >/dev/null 2>&1; then
-  dnf install -y python3 python3-pip curl openssl iproute2 wireguard-tools openvpn
+  dnf install -y python3 python3-pip curl openssl iproute2 iptables iptables-services wireguard-tools openvpn
 elif command -v yum >/dev/null 2>&1; then
-  yum install -y python3 python3-pip curl openssl iproute2 wireguard-tools openvpn
+  yum install -y python3 python3-pip curl openssl iproute2 iptables iptables-services wireguard-tools openvpn
 else
   echo "Unsupported Linux distribution" >&2
   exit 20
 fi
 
-mkdir -p /opt/primevpn-node-agent /etc/primevpn
+mkdir -p /opt/primevpn-node-agent /etc/primevpn /etc/sysctl.d
+cat > /etc/sysctl.d/99-primevpn.conf <<'SYSCTL'
+net.ipv4.ip_forward=1
+net.ipv4.conf.all.rp_filter=2
+SYSCTL
+sysctl --system >/dev/null 2>&1 || true
 python3 -m venv /opt/primevpn-node-agent/venv
 /opt/primevpn-node-agent/venv/bin/pip install --upgrade pip
 curl -fsSL {_q(RAW_BASE+"/pyproject.toml")} -o /opt/primevpn-node-agent/pyproject.toml
@@ -60,8 +65,12 @@ openssl req -x509 -nodes -newkey ed25519 -days 825 \
   -subj {_q("/CN="+host)} -addext "$SAN"
 chmod 600 /etc/primevpn/agent.key
 
+cat > /etc/primevpn/agent-public.key <<'VERIFY_KEY_EOF'
+{verify_key}
+VERIFY_KEY_EOF
+chmod 600 /etc/primevpn/agent-public.key
 cat > /etc/primevpn/agent.env <<EOF
-PRIMEVPN_AGENT_VERIFY_PUBLIC_KEY={_q(verify_key)}
+PRIMEVPN_AGENT_VERIFY_PUBLIC_KEY_FILE=/etc/primevpn/agent-public.key
 PRIMEVPN_NODE_ID={_q(node_id)}
 PORT=$PORT
 EOF
