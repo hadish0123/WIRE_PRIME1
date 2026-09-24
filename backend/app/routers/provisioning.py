@@ -186,7 +186,16 @@ if command -v iptables >/dev/null 2>&1; then
   iptables -C INPUT -p tcp --dport "$PORT" -j ACCEPT >/dev/null 2>&1 || iptables -I INPUT -p tcp --dport "$PORT" -j ACCEPT
 fi
 if command -v netfilter-persistent >/dev/null 2>&1; then netfilter-persistent save >/dev/null 2>&1 || true; fi
-AGENT_URL="https://$PUBLIC_HOST:$PORT"
+# Keep the Node Agent reachable through the conventional HTTPS control port. TCP/443 can coexist with WireGuard UDP/443.
+# If the Agent itself is on another free TCP port, transparently redirect TCP/443 to it.
+AGENT_PUBLIC_PORT=443
+if [ "$PORT" != "$AGENT_PUBLIC_PORT" ] && command -v iptables >/dev/null 2>&1; then
+  iptables -t nat -C PREROUTING -p tcp --dport "$AGENT_PUBLIC_PORT" -j REDIRECT --to-ports "$PORT" >/dev/null 2>&1 || \
+    iptables -t nat -I PREROUTING -p tcp --dport "$AGENT_PUBLIC_PORT" -j REDIRECT --to-ports "$PORT"
+  iptables -t nat -C OUTPUT -p tcp -d 127.0.0.1 --dport "$AGENT_PUBLIC_PORT" -j REDIRECT --to-ports "$PORT" >/dev/null 2>&1 || true
+  netfilter-persistent save >/dev/null 2>&1 || true
+fi
+AGENT_URL="https://$PUBLIC_HOST:$AGENT_PUBLIC_PORT"
 PREFLIGHT="$(curl -kfsS --max-time 10 "https://127.0.0.1:$PORT/diagnostics/preflight" -H "X-Agent-Token: $AGENT_TOKEN")"
 printf '%s' "$PREFLIGHT" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("ready") is True, " | ".join(x.get("name")+": "+x.get("detail","") for x in d.get("issues",[]))' || {
   echo "NODE PREFLIGHT FAILED"
