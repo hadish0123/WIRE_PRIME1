@@ -402,11 +402,11 @@ async def register_agent(node_id: str, body: AgentRegistration, request: Request
         private, public = wg_keypair()
         db.add(InboundWireGuard(inbound_id=inbound.id,server_public_key=public,server_private_key_encrypted=encrypt_secret(private))); db.flush()
         try:
-            # Create the test client BEFORE applying WireGuard. The credential issuer
+            # Keep the client address as a /24 pool address here; credentials.py derives the device peer as /32.\n            # A /32 client address would leave allocate_device_address() with an empty host pool.\n            # Create the test client BEFORE applying WireGuard. The credential issuer
             # materializes the peer and sends the complete server config (including
             # that peer) to the Node Agent. Applying an empty server config here would
             # make the agent's strict peer_count validation fail with HTTP 502.
-            client=Client(tenant_id=node.tenant_id,created_by_admin_id=manager.id,inbound_id=inbound.id,name="AUTO-NODE-TEST-CLIENT",status=ResourceState.active,assigned_address="10.66.0.2/32")
+            client=Client(tenant_id=node.tenant_id,created_by_admin_id=manager.id,inbound_id=inbound.id,name="AUTO-NODE-TEST-CLIENT",status=ResourceState.active,assigned_address="10.66.0.2/24")
             db.add(client); db.flush()
             credential=issue_client_credential(client.id,admin=manager,db=db)
             auto_setup={"created":True,"inbound_id":inbound.id,"client_id":client.id,"credential_id":credential.get("credential_id"),"listen_port":listen_port,"traffic_status":"NO_TRAFFIC_YET","traffic_reason":"The test client exists, but no phone/PC has connected with its generated configuration yet."}
