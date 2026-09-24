@@ -100,20 +100,51 @@ async function loadTrafficView(){
   quotaRows.value=await quotas.overview();
  }catch(e){notice.value=e instanceof Error?e.message:"خطای Traffic API"}
 }
-async function load(){loading.value=true;try{
- me.value=await auth.me();
+async function refreshData(){
+ if(!me.value)return;
  const isRep=me.value.role==="representative";
- const[n,i,c,t,auditData,q]=await Promise.all([
-  nodes.list(),inbounds.list(),clients.list(),
-  isRep?Promise.resolve({total_bytes:0,today_bytes:0,month_bytes:0}):traffic.summary(trafficDays.value),
-  isRep?Promise.resolve([]):audit.list(),
-  isRep?Promise.resolve([]):quotas.overview()
- ]);
- nodeRows.value=n;inboundRows.value=i;clientRows.value=c;trafficData.value=t;quotaRows.value=q;auditRows.value=auditData;
- if(me.value.role!=="tenant_operator"&&me.value.role!=="representative"&&me.value.tenant_id){try{const sr=await settings.get();settingsData.value=sr;settingsDraft.value={...sr.settings}}catch(e){notice.value=e instanceof Error?e.message:"خطای Settings API"}}
- if(me.value.role!=="tenant_operator"&&me.value.role!=="representative"){adminRows.value=await admins.list();adminInboundRows.value=await admins.inbounds()}
- if(isRep){adminInboundRows.value=await admins.myInbounds();section.value="clients"}
-}catch(e){if(localStorage.getItem("primevpn_access"))loginError.value=e instanceof Error?e.message:"خطای API"}finally{loading.value=false;booting.value=false}}
+ const tasks:Promise<any>[]=[
+  nodes.list().then(v=>{nodeRows.value=v}),
+  inbounds.list().then(v=>{inboundRows.value=v}),
+  clients.list().then(v=>{clientRows.value=v})
+ ];
+ if(isRep){
+  trafficData.value={total_bytes:0,today_bytes:0,month_bytes:0};
+  auditRows.value=[];quotaRows.value=[];
+  tasks.push(admins.myInbounds().then(v=>{adminInboundRows.value=v;section.value="clients"}));
+ }else{
+  tasks.push(
+   traffic.summary(trafficDays.value).then(v=>{trafficData.value=v}),
+   audit.list().then(v=>{auditRows.value=v}),
+   quotas.overview().then(v=>{quotaRows.value=v})
+  );
+ }
+ if(me.value.role!=="tenant_operator"&&!isRep){
+  tasks.push(
+   admins.list().then(v=>{adminRows.value=v}),
+   admins.inbounds().then(v=>{adminInboundRows.value=v})
+  );
+  if(me.value.tenant_id){
+   tasks.push(settings.get().then(sr=>{settingsData.value=sr;settingsDraft.value={...sr.settings}}));
+  }
+ }
+ const settled=await Promise.allSettled(tasks);
+ const failed=settled.find(x=>x.status==="rejected") as PromiseRejectedResult|undefined;
+ if(failed&&!notice.value)notice.value=failed.reason instanceof Error?failed.reason.message:"بخشی از داده‌ها بارگذاری نشد";
+}
+async function load(){
+ loading.value=true;
+ try{
+  me.value=await auth.me();
+  booting.value=false;
+  await refreshData();
+ }catch(e){
+  if(localStorage.getItem("primevpn_access"))loginError.value=e instanceof Error?e.message:"خطای API";
+ }finally{
+  loading.value=false;
+  booting.value=false;
+ }
+}
 async function login(){loginError.value="";loading.value=true;try{const r=await auth.login(email.value,password.value);if(r.mfa_required){mfaToken.value=r.mfa_token;modal.value="mfa";return}localStorage.setItem("primevpn_access",r.access_token);await load()}catch(e){loginError.value=e instanceof Error?e.message:"ورود ناموفق"}finally{loading.value=false}}
 async function verifyMfa(){try{const r=await auth.mfaVerify(mfaToken.value,mfaCode.value);localStorage.setItem("primevpn_access",r.access_token);modal.value=null;await load()}catch(e){loginError.value=e instanceof Error?e.message:"کد MFA نامعتبر"}}
 async function act(fn:()=>Promise<any>,success="انجام شد"){try{await fn();notice.value=success;modal.value=null;await load()}catch(e){notice.value=e instanceof Error?e.message:"خطا"}}
@@ -188,8 +219,8 @@ onMounted(load);
 <div v-if="drawer" class="drawer-backdrop" @click="drawer=false"></div>
 <aside class="sidebar" :class="{open:drawer}"><div class="brand"><span class="brand-mark">P</span><div><b>PRIMEVPN</b><small>Control Plane v1.0.0</small></div></div><nav><button v-for="s in visibleSections" :key="s[0]" :class="{active:section===s[0]}" @click.stop="goSection(s[0])"><span class="nav-icon">{{["⌂","♙","▤","◎","▣","◈","⌁","⚙"][sections.indexOf(s)]}}</span><span>{{s[lang==="fa"?1:2]}}</span><small>{{s[lang==="fa"?2:1]}}</small></button></nav><div class="sidebar-foot"><i></i>{{me.email}}<button class="icon" @click="logout">خروج</button></div></aside>
 <main class="main"><header><button class="mobile-menu" @click="drawer=true">☰</button><div class="top-brand"><span class="brand-mark">P</span><div><b>PRIME<span>VPN</span></b><small>Secure · Fast · Global</small></div></div><div class="header-spacer"></div><div class="account-pill"><i></i><div><b>{{me.role}}</b><small>Tenant</small></div><span>●</span></div><div class="language"><button :class="{on:lang==='fa'}" @click="lang='fa'">فارسی</button><button :class="{on:lang==='en'}" @click="lang='en'">English</button></div></header><div v-if="notice" class="notice" @click="notice=''">{{notice}}</div>
-<div v-if="loading" class="panel"><div class="empty">در حال دریافت داده…</div></div>
-<section v-else-if="section==='dashboard'" class="dashboard-home">
+<div v-if="loading" class="notice panel-loading">در حال بروزرسانی داده‌ها…</div>
+<section v-if="section==='dashboard'" class="dashboard-home">
 <div class="dashboard-toolbar"><div><span class="eyebrow">PRIMEVPN CONTROL PLANE</span><h1>{{t("نمای کلی سیستم","System Overview")}}</h1><p>{{t("وضعیت لحظه‌ای نودها، اینباندها، کلاینت‌ها و مصرف ترافیک","Live overview of nodes, inbounds, clients and traffic")}}</p></div><button class="refresh-btn" :disabled="loading" @click="refreshDashboard">↻ {{t("بروزرسانی","Refresh")}}</button></div>
 <div class="welcome-row"><div><small>{{t("خوش آمدید","Welcome back")}}</small><h2>{{me.email}}</h2><div class="service-status"><i></i><b>{{t("Control Plane آنلاین است","Control Plane is online")}}</b><small>API</small></div></div><div class="hero-shield">P</div></div>
 <div class="stats dashboard-stats">
