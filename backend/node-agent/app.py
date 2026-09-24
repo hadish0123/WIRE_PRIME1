@@ -3,7 +3,7 @@ from datetime import datetime,timezone
 from fastapi import FastAPI,Header,HTTPException
 from pydantic import BaseModel,Field
 from agent_security import verify_control_token,require_scope
-VERSION="100.0.8" # reconcile interface routes plus hardened forwarding/NAT diagnostics
+VERSION="100.0.9" # reconcile routes and firewall ordering for reliable client forwarding
 
 app=FastAPI(title="PRIMEVPN Node Agent",version=VERSION)
 class WireGuardSmoke(BaseModel):
@@ -137,6 +137,12 @@ def apply(data:ApplyConfig,x_agent_token:str|None=Header(default=None)):
        cidr=m.group(1).strip() if m else ""
        if "/" in cidr:
         net=__import__("ipaddress").ip_interface(cidr).network
+        # Open/reload the host firewall first. UFW/firewalld reloads may rewrite
+        # their backend chains, so PRIMEVPN forwarding/NAT rules must be installed
+        # afterwards, not before.
+        port_match=re.search(r"(?m)^ListenPort\s*=\s*(\d+)",data.config)
+        if port_match:
+         allow_input_port(port_match.group(1),"wireguard")
         rules=[
          ["iptables","-C","FORWARD","-i",name,"-j","ACCEPT"],
          ["iptables","-C","FORWARD","-o",name,"-m","conntrack","--ctstate","RELATED,ESTABLISHED","-j","ACCEPT"],
@@ -148,15 +154,6 @@ def apply(data:ApplyConfig,x_agent_token:str|None=Header(default=None)):
         check=subprocess.run(["iptables","-t","nat","-C","POSTROUTING","-s",str(net),"-o",wan,"-j","MASQUERADE"],capture_output=True,text=True,timeout=10)
         if check.returncode:
          subprocess.run(["iptables","-t","nat","-I","POSTROUTING","1","-s",str(net),"-o",wan,"-j","MASQUERADE"],capture_output=True,text=True,timeout=10,check=True)
-        port_match=re.search(r"(?m)^ListenPort\s*=\s*(\d+)",data.config)
-        if port_match:
-         listen_port=port_match.group(1)
-         allow_input_port(listen_port,"wireguard")
-         if shutil.which("ufw") and "active" in subprocess.run(["ufw","status"],capture_output=True,text=True,timeout=10).stdout.lower():
-          subprocess.run(["ufw","allow",f"{listen_port}/udp"],capture_output=True,text=True,timeout=10,check=True)
-         if shutil.which("firewall-cmd") and subprocess.run(["firewall-cmd","--state"],capture_output=True,text=True,timeout=10).returncode==0:
-          subprocess.run(["firewall-cmd","--permanent","--add-port",f"{listen_port}/udp"],capture_output=True,text=True,timeout=10,check=True)
-          subprocess.run(["firewall-cmd","--reload"],capture_output=True,text=True,timeout=10,check=True)
         # Persist forwarding/NAT after the inbound is created. The installer runs
         # before an inbound exists, so saving only during installation loses these
         # rules after a VPS reboot.
