@@ -173,7 +173,7 @@ def _wg_dump(interface):
  for line in rows[1:]:
   parts=line.split("\t")
   if len(parts)>=8:
-   peers.append({"public_key":parts[0],"preshared_key_configured":parts[1] != "0000000000000000000000000000000000000000000000000000000000000000","endpoint":parts[2],"allowed_ips":parts[3],"last_handshake":int(parts[4]),"bytes_received":int(parts[5]),"bytes_sent":int(parts[6]),"persistent_keepalive":int(parts[7])})
+   peers.append({"public_key":parts[0],"preshared_key_configured":parts[1] != "0000000000000000000000000000000000000000000000000000000000000000","endpoint":parts[2],"allowed_ips":parts[3],"last_handshake":int(parts[4]),"bytes_received":int(parts[5]),"bytes_sent":int(parts[6]),"persistent_keepalive":0 if parts[7] == "off" else int(parts[7])})
  return {"public_key":head[0],"private_key_present":head[1] != "(none)","listen_port":int(head[2]),"fwmark":head[3],"peers":peers}
 
 @app.get("/diagnostics/preflight")
