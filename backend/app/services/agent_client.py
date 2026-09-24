@@ -46,6 +46,10 @@ def _validate_wireguard(node,interface,config):
     if live_port != expected_port:
         raise RuntimeError(f"Node WireGuard listen port mismatch: expected {expected_port} got {diag.get('live_port')}")
     expected_public,expected_peers=_expected_wireguard(config)
+    address_match=re.search(r"(?m)^Address\s*=\s*([^\n]+)",config)
+    expected_address=(address_match.group(1).split(",")[0].strip() if address_match else "")
+    if expected_address and expected_address not in str(diag.get("interface_addresses") or ""):
+        raise RuntimeError(f"Node WireGuard interface address mismatch: expected {expected_address} got {diag.get('interface_addresses')}")
     if expected_public and diag.get("live_public_key")!=expected_public:
         raise RuntimeError("Node WireGuard public key does not match the rendered server private key")
     live={str(p.get("public_key") or ""):p for p in (diag.get("peers") or [])}
