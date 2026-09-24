@@ -78,7 +78,7 @@ def issue(client_id:str,admin:Admin=Depends(require_permission("clients:update")
     if wg.server_public_key != derived_public: wg.server_public_key=derived_public
    awg_params=""
    if inbound.protocol==Protocol.amneziawg:
-    awg_params=f"\nJc = 7\nJmin = 8\nJmax = 80\nS1 = {wg.amnezia_s1}\nS2 = {wg.amnezia_s2}\nS3 = {wg.amnezia_s3}\nS4 = {wg.amnezia_s4}\nH1 = {wg.amnezia_h1}\nH2 = {wg.amnezia_h2}\nH3 = {wg.amnezia_h3}\nH4 = {wg.amnezia_h4}"
+    awg_params=f"\nJc = {wg.amnezia_junk or 7}\nJmin = {wg.amnezia_init or 8}\nJmax = {wg.amnezia_response or 80}\nS1 = {wg.amnezia_s1}\nS2 = {wg.amnezia_s2}\nS3 = {wg.amnezia_s3}\nS4 = {wg.amnezia_s4}\nH1 = {wg.amnezia_h1}\nH2 = {wg.amnezia_h2}\nH3 = {wg.amnezia_h3}\nH4 = {wg.amnezia_h4}"
    payload=f"[Interface]\nPrivateKey = {material['private_key']}\nAddress = {device.assigned_address}\nDNS = {inbound.dns or '1.1.1.1'}{awg_params}\n\n[Peer]\nPublicKey = {wg.server_public_key}\nAllowedIPs = 0.0.0.0/0\nEndpoint = {endpoint_host}:{inbound.listen_port}\nPersistentKeepalive = 25\n"
    rendered=render_inbound(inbound,node,db)
    try:
@@ -125,7 +125,7 @@ def issue(client_id:str,admin:Admin=Depends(require_permission("clients:update")
   material={"private_key":private,"assigned_address":device.assigned_address}
   awg_params=""
   if inbound.protocol==Protocol.amneziawg:
-   awg_params=f"\nJc = 7\nJmin = 8\nJmax = 80\nS1 = {existing.amnezia_s1}\nS2 = {existing.amnezia_s2}\nS3 = {existing.amnezia_s3}\nS4 = {existing.amnezia_s4}\nH1 = {existing.amnezia_h1}\nH2 = {existing.amnezia_h2}\nH3 = {existing.amnezia_h3}\nH4 = {existing.amnezia_h4}"
+   awg_params=f"\nJc = {existing.amnezia_junk or 7}\nJmin = {existing.amnezia_init or 8}\nJmax = {existing.amnezia_response or 80}\nS1 = {existing.amnezia_s1}\nS2 = {existing.amnezia_s2}\nS3 = {existing.amnezia_s3}\nS4 = {existing.amnezia_s4}\nH1 = {existing.amnezia_h1}\nH2 = {existing.amnezia_h2}\nH3 = {existing.amnezia_h3}\nH4 = {existing.amnezia_h4}"
   payload=f"[Interface]\nPrivateKey = {private}\nAddress = {device.assigned_address}\nDNS = {inbound.dns or '1.1.1.1'}{awg_params}\n\n[Peer]\nPublicKey = {existing.server_public_key}\nAllowedIPs = 0.0.0.0/0\nEndpoint = {endpoint_host}:{inbound.listen_port}\nPersistentKeepalive = 25\n"
  else:
   cert_key_source=db.query(InboundOpenVPN).filter(InboundOpenVPN.inbound_id==inbound.id).first()
