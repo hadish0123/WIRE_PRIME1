@@ -402,8 +402,10 @@ async def register_agent(node_id: str, body: AgentRegistration, request: Request
         private, public = wg_keypair()
         db.add(InboundWireGuard(inbound_id=inbound.id,server_public_key=public,server_private_key_encrypted=encrypt_secret(private))); db.flush()
         try:
-            rendered=render_inbound(inbound,node,db)
-            apply_agent(node,rendered["protocol"],rendered["interface"],rendered["config"],rendered.get("files"))
+            # Create the test client BEFORE applying WireGuard. The credential issuer
+            # materializes the peer and sends the complete server config (including
+            # that peer) to the Node Agent. Applying an empty server config here would
+            # make the agent's strict peer_count validation fail with HTTP 502.
             client=Client(tenant_id=node.tenant_id,created_by_admin_id=manager.id,inbound_id=inbound.id,name="AUTO-NODE-TEST-CLIENT",status=ResourceState.active,assigned_address="10.66.0.2/32")
             db.add(client); db.flush()
             credential=issue_client_credential(client.id,admin=manager,db=db)
